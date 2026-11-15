@@ -217,6 +217,11 @@ function AssistantAvatar3DComponent({
       if (disposed) return;
 
       const now = performance.now();
+      // Cap render rate at ~36 FPS (interval >= 27ms) to preserve GPU/CPU on 120Hz/144Hz monitors
+      if (!isSoftwareGl && now - lastFrameMs < 27) {
+        frameId = requestAnimationFrame(tick);
+        return;
+      }
       const dt = Math.min(Math.max((now - lastFrameMs) / 1000, 0.001), 0.08);
       lastFrameMs = now;
       const elapsed = (now - startMs) / 1000;

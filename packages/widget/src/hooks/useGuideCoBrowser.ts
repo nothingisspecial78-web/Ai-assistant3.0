@@ -301,21 +301,37 @@ export function useGuideCoBrowser({
     if (!active) return;
 
     let rafId = 0;
+    const lastRect = { left: 0, top: 0, width: 0, height: 0, set: false };
+
     const syncRect = () => {
       const el = targetElRef.current;
       if (el && document.contains(el)) {
         const rect = el.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
-          setTargetRect(rect);
-          setCursorPos({
-            x: rect.left + Math.min(rect.width * 0.72, rect.width - 8),
-            y: rect.top + Math.min(rect.height * 0.65, rect.height - 6),
-          });
-          setTargetMissing(false);
+          const delta =
+            !lastRect.set ||
+            Math.abs(lastRect.left - rect.left) >= 1 ||
+            Math.abs(lastRect.top - rect.top) >= 1 ||
+            Math.abs(lastRect.width - rect.width) >= 1 ||
+            Math.abs(lastRect.height - rect.height) >= 1;
+          if (delta) {
+            lastRect.left = rect.left;
+            lastRect.top = rect.top;
+            lastRect.width = rect.width;
+            lastRect.height = rect.height;
+            lastRect.set = true;
+            setTargetRect(rect);
+            setCursorPos({
+              x: rect.left + Math.min(rect.width * 0.72, rect.width - 8),
+              y: rect.top + Math.min(rect.height * 0.65, rect.height - 6),
+            });
+            setTargetMissing(false);
+          }
           return;
         }
       }
-      if (targetElRef.current) {
+      if (lastRect.set) {
+        lastRect.set = false;
         setTargetRect(null);
       }
     };
@@ -328,7 +344,7 @@ export function useGuideCoBrowser({
     syncRect();
     window.addEventListener('scroll', scheduleSync, true);
     window.addEventListener('resize', scheduleSync);
-    const interval = window.setInterval(scheduleSync, 260);
+    const interval = window.setInterval(scheduleSync, 600);
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
@@ -793,18 +809,13 @@ export function useGuideCoBrowser({
     observer.observe(document.body, {
       childList: true,
       subtree: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ['style', 'class', 'hidden', 'aria-hidden'],
     });
 
-    // Also run once immediately and periodically in case CSS/Framer fade-in finishes after mutation
-    timerId = window.setTimeout(scanForErrors, 160);
-    const pollId = window.setInterval(scanForErrors, 400);
+    // Run once after initial setup
+    timerId = window.setTimeout(scanForErrors, 250);
 
     return () => {
       if (timerId) window.clearTimeout(timerId);
-      window.clearInterval(pollId);
       observer.disconnect();
     };
   }, [active, pausedForInput, decision, triggerTroubleshootingForErrors]);

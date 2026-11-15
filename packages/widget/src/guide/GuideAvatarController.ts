@@ -212,9 +212,12 @@ export class GuideAvatarController {
   }
 
   private startLoop(): void {
+    let lastMs = 0;
     const loop = (now: number) => {
       if (this.disposed) return;
       this.animationFrameId = requestAnimationFrame(loop);
+      if (now - lastMs < 27) return;
+      lastMs = now;
       this.renderFrame(now);
     };
     this.animationFrameId = requestAnimationFrame(loop);

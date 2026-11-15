@@ -275,25 +275,25 @@ export function findElementByAiId(targetId: string, root?: ParentNode): HTMLElem
 
 function isErrorNodeVisible(el: Element): boolean {
   if (el.closest(EXCLUDED_CONTAINER_SELECTOR)) return false;
-  if ((el as HTMLElement).hidden) return false;
+  const htmlEl = el as HTMLElement;
+  if (htmlEl.hidden) return false;
 
-  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
-    let cur: Element | null = el;
-    let depth = 0;
-    while (cur && depth < 6 && cur.tagName !== 'BODY' && cur.tagName !== 'HTML') {
-      const style = window.getComputedStyle(cur);
-      const op = Number.parseFloat(style.opacity || '1');
-      if (style.display === 'none' || style.visibility === 'hidden' || op <= 0.05) {
-        return false;
-      }
-      cur = cur.parentElement;
-      depth += 1;
-    }
+  // Fast path: offsetParent is null for display:none elements (unless position: fixed)
+  if (typeof htmlEl.offsetParent !== 'undefined' && htmlEl.offsetParent === null && htmlEl.style?.position !== 'fixed') {
+    return false;
   }
 
   if (typeof el.getBoundingClientRect === 'function') {
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return false;
+  }
+
+  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+    const style = window.getComputedStyle(el);
+    const op = Number.parseFloat(style.opacity || '1');
+    if (style.display === 'none' || style.visibility === 'hidden' || op <= 0.05) {
+      return false;
+    }
   }
 
   return true;

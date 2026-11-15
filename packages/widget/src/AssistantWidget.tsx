@@ -633,8 +633,8 @@ export function AssistantWidget({
   return (
     <div className="aia-root" style={rootStyle}>
       <UserCursorOverlay
-        enabled={enabled && !inspecting && isAgentWorking}
-        showLabel={isAgentWorking}
+        enabled={false}
+        showLabel={false}
         label="You"
       />
 

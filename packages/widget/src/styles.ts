@@ -830,11 +830,7 @@ export function ensureWidgetStyles(): void {
       color: #ffffff;
     }
 
-    /* Custom Agent-Style User Mouse Cursor */
-    html.aia-custom-user-cursor,
-    html.aia-custom-user-cursor * {
-      cursor: none !important;
-    }
+    /* Custom User Mouse Overlay - never hide native hardware mouse cursor to prevent input lag */
     .aia-user-cursor-root {
       position: fixed;
       inset: 0;
@@ -848,8 +844,8 @@ export function ensureWidgetStyles(): void {
       left: 0;
       pointer-events: none;
       will-change: transform;
-      filter: drop-shadow(0 5px 10px rgba(15, 23, 42, 0.38));
-      transition: opacity 140ms ease;
+      filter: drop-shadow(0 4px 8px rgba(15, 23, 42, 0.3));
+      transition: opacity 120ms ease;
     }
     .aia-user-cursor-pointer[data-pressed="true"] svg {
       transform: scale(0.88);
@@ -858,28 +854,15 @@ export function ensureWidgetStyles(): void {
       transition: transform 90ms ease-out;
     }
 
-    /* Gemini Live-Style Screen-Sharing Perimeter Glow & Pill */
-    @keyframes aia-gemini-glow-shift {
-      0% { background-position: 0% 50%; }
-      50% { background-position: 100% 50%; }
-      100% { background-position: 0% 50%; }
-    }
+    /* Hardware-Accelerated Screen-Sharing Perimeter Glow & Pill */
     @keyframes aia-gemini-aura-breathe {
       0%, 100% {
-        opacity: 0.85;
-        box-shadow:
-          inset 0 0 0 2px rgba(96, 165, 250, 0.55),
-          inset 0 0 26px rgba(59, 130, 246, 0.34),
-          inset 0 0 64px rgba(139, 92, 246, 0.2),
-          inset 0 0 110px rgba(34, 211, 238, 0.14);
+        opacity: 0.65;
+        transform: scale(1);
       }
       50% {
-        opacity: 1;
-        box-shadow:
-          inset 0 0 0 2.5px rgba(34, 211, 238, 0.72),
-          inset 0 0 36px rgba(99, 102, 241, 0.42),
-          inset 0 0 84px rgba(168, 85, 247, 0.26),
-          inset 0 0 130px rgba(59, 130, 246, 0.18);
+        opacity: 0.95;
+        transform: scale(1.002);
       }
     }
     @keyframes aia-gemini-orb-pulse {
@@ -891,11 +874,17 @@ export function ensureWidgetStyles(): void {
       inset: 0;
       z-index: 2147483008;
       pointer-events: none;
+      contain: layout style paint;
     }
     .aia-live-glow-aura {
       position: fixed;
       inset: 0;
       pointer-events: none;
+      box-shadow:
+        inset 0 0 0 2px rgba(59, 130, 246, 0.6),
+        inset 0 0 24px rgba(59, 130, 246, 0.28),
+        inset 0 0 56px rgba(139, 92, 246, 0.16);
+      will-change: opacity, transform;
       animation: aia-gemini-aura-breathe 2.8s ease-in-out infinite;
     }
     .aia-live-glow-border {
@@ -903,6 +892,8 @@ export function ensureWidgetStyles(): void {
       inset: 0;
       padding: 3px;
       pointer-events: none;
+      will-change: opacity;
+      transform: translateZ(0);
       background: linear-gradient(
         120deg,
         rgba(34, 211, 238, 0.9),
@@ -911,8 +902,7 @@ export function ensureWidgetStyles(): void {
         rgba(249, 115, 22, 0.72),
         rgba(34, 211, 238, 0.9)
       );
-      background-size: 260% 260%;
-      animation: aia-gemini-glow-shift 5.5s ease infinite;
+      background-size: 200% 200%;
       -webkit-mask:
         linear-gradient(#fff 0 0) content-box,
         linear-gradient(#fff 0 0);
