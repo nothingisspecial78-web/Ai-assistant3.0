@@ -91,7 +91,11 @@ export function createChatRouter(deps: ServerDeps): Router {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders?.();
+    try {
+      res.flushHeaders?.();
+    } catch {
+      // Safe no-op in serverless runtimes
+    }
 
     const lastUserText =
       [...parsed.data.messages].reverse().find((m) => m.role === 'user')?.content || '';

@@ -4,6 +4,23 @@ import type { SourceCitation } from '@ai-assistant/core';
 import type { ServerConfig } from '../config.ts';
 
 function extractForwardedIp(req: Request): string {
+  // 1. Check x-forwarded-for header (standard on Vercel, Cloudflare, AWS)
+  const xForwardedFor = req.headers['x-forwarded-for'];
+  if (typeof xForwardedFor === 'string' && xForwardedFor.trim()) {
+    const client = xForwardedFor.split(',')[0]?.trim();
+    if (client) return client;
+  } else if (Array.isArray(xForwardedFor) && xForwardedFor.length > 0) {
+    const client = xForwardedFor[0]?.split(',')[0]?.trim();
+    if (client) return client;
+  }
+
+  // 2. Check x-real-ip
+  const xRealIp = req.headers['x-real-ip'];
+  if (typeof xRealIp === 'string' && xRealIp.trim()) {
+    return xRealIp.trim();
+  }
+
+  // 3. Check Forwarded header (RFC 7239)
   const forwarded = req.headers.forwarded;
   const headerVal = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   if (typeof headerVal === 'string' && headerVal.trim()) {
@@ -24,7 +41,14 @@ function extractForwardedIp(req: Request): string {
       }
     }
   }
-  return req.ip || '127.0.0.1';
+
+  // 4. Safely inspect socket without triggering Express req.ip getter crash in serverless
+  const socket = req.socket || (req as unknown as { connection?: { remoteAddress?: string } }).connection;
+  if (socket?.remoteAddress) {
+    return socket.remoteAddress;
+  }
+
+  return '127.0.0.1';
 }
 
 function clientIpKey(req: Request): string {
@@ -38,6 +62,7 @@ export function createIpRateLimiter(cfg: ServerConfig) {
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: (req: Request) => clientIpKey(req),
+    validate: { xForwardedForHeader: false, default: false },
     message: { error: 'Too many requests from this IP address. Please retry shortly.' },
   });
 }
@@ -52,6 +77,7 @@ export function createUserRateLimiter(cfg: ServerConfig) {
       const user = (req as Request & { authUser?: { userId: string } }).authUser;
       return user?.userId ? `user:${user.userId}` : `ip:${clientIpKey(req)}`;
     },
+    validate: { xForwardedForHeader: false, default: false },
     message: { error: 'User rate limit exceeded. Please pause briefly before sending more requests.' },
   });
 }

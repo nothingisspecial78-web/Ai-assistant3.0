@@ -542,53 +542,82 @@ export function createGuideStepRouter({ cfg, fetchImpl }: GuideStepRouteDeps): R
   const router = Router();
 
   router.post('/', async (req: Request, res: Response) => {
-    const parsed = GuideStepRequestSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({
-        error: 'Invalid guide-step request payload',
-        issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+    try {
+      const parsed = GuideStepRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: 'Invalid guide-step request payload',
+          issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+        });
+        return;
+      }
+
+      const {
+        goal,
+        previousStepSummary,
+        currentRoute,
+        stepNumber,
+        pageMap,
+        confirmedPath,
+        preferredTargetId,
+        preferredRoute,
+        availableRoutes,
+        appContext,
+        pageErrors,
+        userReply,
+        troubleshootingContext,
+      } = parsed.data;
+
+      const decision = await resolveGuideStepDecision({
+        goal,
+        previousStepSummary,
+        currentRoute,
+        stepNumber,
+        pageMap,
+        confirmedPath,
+        preferredTargetId,
+        preferredRoute,
+        availableRoutes,
+        appContext,
+        pageErrors,
+        userReply,
+        troubleshootingContext,
+        openRouterApiKey: cfg.openRouterApiKey,
+        geminiApiKey: cfg.geminiApiKey,
+        groqApiKey: cfg.groqApiKey,
+        timeoutMs: cfg.llmTimeoutMs,
+        fetchImpl,
       });
-      return;
+
+      res.json(decision);
+    } catch (err) {
+      logger.error({ err }, 'Unhandled error in guide-step router; activating deterministic fallback');
+      try {
+        const body = (req.body || {}) as Partial<import('@ai-assistant/core').GuideStepRequest>;
+        const fallback = buildDeterministicGuideStep({
+          goal: typeof body.goal === 'string' ? body.goal : 'Navigate',
+          previousStepSummary: typeof body.previousStepSummary === 'string' ? body.previousStepSummary : '',
+          pageMap: Array.isArray(body.pageMap) ? body.pageMap : [],
+          stepNumber: typeof body.stepNumber === 'number' ? body.stepNumber : 1,
+          currentRoute: typeof body.currentRoute === 'string' ? body.currentRoute : '/',
+          confirmedPath: Boolean(body.confirmedPath),
+          preferredTargetId: body.preferredTargetId,
+          preferredRoute: body.preferredRoute,
+          availableRoutes: body.availableRoutes,
+        });
+        res.json({
+          ...fallback,
+          provider: 'deterministic-dom-fallback',
+        });
+      } catch (innerErr) {
+        logger.error({ innerErr }, 'Emergency fallback failed in guide-step router');
+        res.json({
+          action: 'ask_user',
+          tip: 'Please select or click the target item on screen to continue.',
+          provider: 'emergency-prompt-fallback',
+        });
+      }
     }
-
-    const {
-      goal,
-      previousStepSummary,
-      currentRoute,
-      stepNumber,
-      pageMap,
-      confirmedPath,
-      preferredTargetId,
-      preferredRoute,
-      availableRoutes,
-      appContext,
-      pageErrors,
-      userReply,
-      troubleshootingContext,
-    } = parsed.data;
-
-    const decision = await resolveGuideStepDecision({
-      goal,
-      previousStepSummary,
-      currentRoute,
-      stepNumber,
-      pageMap,
-      confirmedPath,
-      preferredTargetId,
-      preferredRoute,
-      availableRoutes,
-      appContext,
-      pageErrors,
-      userReply,
-      troubleshootingContext,
-      openRouterApiKey: cfg.openRouterApiKey,
-      geminiApiKey: cfg.geminiApiKey,
-      groqApiKey: cfg.groqApiKey,
-      timeoutMs: cfg.llmTimeoutMs,
-      fetchImpl,
-    });
-
-    res.json(decision);
   });
 
   return router;
