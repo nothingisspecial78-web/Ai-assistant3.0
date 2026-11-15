@@ -5,6 +5,7 @@ import { AssistantWidget, type AssistantWidgetProps } from './AssistantWidget.ts
 export interface EmbedInitOptions {
   appId: string;
   apiUrl: string;
+  appName?: string;
   authToken?: string;
   getAuthToken?: () => string | Promise<string>;
   title?: string;
@@ -29,6 +30,7 @@ export function mountAssistantWidget(options: EmbedInitOptions): void {
   const props: AssistantWidgetProps = {
     appId: options.appId,
     apiUrl: options.apiUrl,
+    appName: options.appName,
     getAuthToken:
       options.getAuthToken ||
       (options.authToken ? () => options.authToken! : undefined),
@@ -66,6 +68,7 @@ function autoInitFromScriptTag(): void {
     mountAssistantWidget({
       appId,
       apiUrl,
+      appName: currentScript.getAttribute('data-app-name') || undefined,
       authToken: currentScript.getAttribute('data-auth-token') || undefined,
       title: currentScript.getAttribute('data-title') || undefined,
       position:

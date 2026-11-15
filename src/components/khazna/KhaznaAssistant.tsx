@@ -1542,6 +1542,7 @@ export function KhaznaAssistant() {
     <AssistantErrorBoundary>
       <AssistantWidget
         appId="khazna-ledger"
+        appName="Khazna"
         apiUrl=""
         userKey={computedIdentity.userKey}
         userLabel={computedIdentity.userLabel}

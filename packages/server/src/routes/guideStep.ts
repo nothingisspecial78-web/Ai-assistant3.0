@@ -81,11 +81,16 @@ function buildCompactGuideUserJson(params: {
     ...(el.sensitive ? { sensitive: true } : {}),
   }));
 
+  const compactPrev =
+    params.previousStepSummary.length > 380
+      ? params.previousStepSummary.slice(-380)
+      : params.previousStepSummary;
+
   const userPayload: Record<string, unknown> = {
     goal: params.goal,
     route: params.currentRoute,
     step: params.stepNumber,
-    prev: params.previousStepSummary,
+    prev: compactPrev,
     pageMap: compactElements,
   };
 
@@ -194,6 +199,34 @@ export async function resolveGuideStepDecision(params: {
       })
     : null;
 
+  const lowerGoal = goal.toLowerCase();
+  const wantsDemo = /\b(demo|sample|preview|trial)\b/i.test(lowerGoal);
+  const isAuthRoute =
+    /^\/(?:login|signin|auth)(?:\/|$)|\/(?:login|signin)$/i.test(currentRoute);
+  const hasPostLoginTask =
+    /\b(add|create|enroll|invite|import|upload|export|download|delete|remove|edit|update|void|pay|payment|fee|deposit|bulk|batch|report|statement|password|reset|profile|notification|notice|ledger|institution|audit|receipt|settings)\b/i.test(
+      lowerGoal
+    );
+  const isLoginOnlyGoal =
+    /\b(log\s*in|sign\s*in|login|signin)\b/i.test(lowerGoal) && !hasPostLoginTask;
+
+  // Hard stop once login-only goal has reached a non-auth overview route
+  if (
+    isLoginOnlyGoal &&
+    !isAuthRoute &&
+    (stepNumber >= 2 ||
+      /login|sign\s*in|signin/i.test(previousStepSummary))
+  ) {
+    return {
+      ...sanitizeGuideStepDecision(
+        { action: 'complete', tip: 'Signed in and on the overview page.' },
+        pageMap,
+        stepNumber
+      ),
+      provider: 'goal-guard',
+    };
+  }
+
   const finalizeParsedDecision = (
     parsed: Record<string, unknown>,
     providerName: string
@@ -203,6 +236,28 @@ export async function resolveGuideStepDecision(params: {
       availableRoutes,
       currentRoute,
     });
+
+    // Block LLM from picking a demo button unless the user explicitly asked for a demo
+    if (!wantsDemo && safe.targetId) {
+      const targetEl = pageMap.find((el) => el.id === safe.targetId);
+      const targetHay = `${safe.targetId} ${targetEl?.label || ''}`;
+      if (/\bdemo\b|try-demo|sample-account|quick-demo/i.test(targetHay)) {
+        return {
+          ...buildDeterministicGuideStep({
+            goal,
+            previousStepSummary,
+            pageMap,
+            stepNumber,
+            currentRoute,
+            confirmedPath,
+            preferredTargetId,
+            preferredRoute,
+            availableRoutes,
+          }),
+          provider: `${providerName}:filtered`,
+        };
+      }
+    }
 
     // If the LLM guessed a single action on a clearly ambiguous Step 1 DOM/route cluster,
     // enforce clarifying prompt cleanly; otherwise preserve the LLM's clarify or action decision.

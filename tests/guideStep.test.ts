@@ -529,5 +529,105 @@ describe('Guide Me Co-Browsing Architecture', () => {
     expect(decision.options?.[1]?.route).toBe('/admin/students/import');
     expect(decision.provider).toBe('google/gemini-2.5-flash');
   });
+
+  it('9. Step 10 History Resilience & Strict Login Scoping: accepts >400 char history without 400 and blocks LLM demo picks', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(
+      '/api/guide-step',
+      createGuideStepRouter({
+        cfg: { openRouterApiKey: '', llmTimeoutMs: 5000 },
+      })
+    );
+
+    const server = app.listen(0);
+    const { port } = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    try {
+      const longHistory = Array.from({ length: 10 }, (_, idx) =>
+        `Guided user to step-${idx + 1}-very-long-element-identifier (Very Long Control Label ${idx + 1})`
+      ).join(' -> ');
+      expect(longHistory.length).toBeGreaterThan(500);
+
+      const step10Res = await fetch(`${baseUrl}/api/guide-step`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goal: 'how do I add a student?',
+          previousStepSummary: longHistory,
+          currentRoute: '/admin/students',
+          stepNumber: 10,
+          pageMap: [
+            {
+              id: 'students-add-btn',
+              tag: 'button',
+              type: 'button',
+              label: 'Add student',
+              hasValue: false,
+              currentRoute: '/admin/students',
+            },
+          ],
+        }),
+      });
+      expect(step10Res.status).toBe(200);
+      const step10Json = (await step10Res.json()) as { action: string };
+      expect(step10Json.action).toBe('complete');
+
+      // LLM attempting to click login-demo-student-btn gets overridden cleanly
+      const mockDemoPick = (async () =>
+        new Response(
+          JSON.stringify({
+            model: 'google/gemini-2.5-flash',
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    action: 'click_safe',
+                    targetId: 'login-demo-student-btn',
+                    tip: 'Click Student Demo.',
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )) as typeof fetch;
+
+      const filtered = await resolveGuideStepDecision({
+        goal: 'guide me to login as student',
+        previousStepSummary: 'Clicked login-role-student (Student)',
+        currentRoute: '/login',
+        stepNumber: 2,
+        confirmedPath: true,
+        pageMap: [
+          { id: 'login-demo-student-btn', tag: 'button', type: 'button', label: 'Student', hasValue: false, currentRoute: '/login' },
+          { id: 'login-student-admission-input', tag: 'input', type: 'text', label: 'Admission number', hasValue: false, currentRoute: '/login' },
+          { id: 'login-submit-btn', tag: 'button', type: 'submit', label: 'Sign in as Student', hasValue: false, currentRoute: '/login' },
+        ],
+        openRouterApiKey: 'test-key',
+        fetchImpl: mockDemoPick,
+      });
+      expect(filtered.targetId).toBe('login-student-admission-input');
+      expect(filtered.action).toBe('point_and_wait');
+
+      // Login goal reaching /app overview completes immediately
+      const atOverview = await resolveGuideStepDecision({
+        goal: 'guide me to login as student',
+        previousStepSummary: 'Clicked login-submit-btn (Sign in as Student)',
+        currentRoute: '/app',
+        stepNumber: 4,
+        confirmedPath: true,
+        pageMap: [
+          { id: 'student-combined-statement-btn', tag: 'button', type: 'button', label: 'Download statement', hasValue: false, currentRoute: '/app' },
+        ],
+        openRouterApiKey: 'test-key',
+        fetchImpl: mockDemoPick,
+      });
+      expect(atOverview.action).toBe('complete');
+    } finally {
+      server.close();
+    }
+  });
 });
 

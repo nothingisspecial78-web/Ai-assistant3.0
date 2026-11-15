@@ -27,10 +27,10 @@ export const GUIDE_SYSTEM_PROMPT = `You are a concise DOM co-browsing guide. Pic
 Reply ONLY with valid JSON:
 {"action":"navigate"|"point_and_wait"|"click_safe"|"complete"|"clarify","targetId":"str","route":"str","tip":"max 12 words","question":"if clarify","options":[{"id":"str","label":"str","description":"short hint","refinedGoal":"str","targetId":"str","route":"str"}]}
 Rules:
-1. When step=1 and confirmedPath=false: THINK if the goal is broad or fits multiple tasks, login types, roles, tabs, export formats, sections, or sub-pages in pageMap/routes. If 2+ distinct tasks apply, ALWAYS return action="clarify" asking which specific task/type they mean with 2-5 options.
+1. Step=1 & confirmedPath=false: if 2+ tasks, login roles/types, tabs, or sub-pages fit, return action="clarify" with 2-5 options.
 2. Otherwise use ONLY: navigate, point_and_wait, click_safe, complete.
-3. NEVER auto-click sensitive:true or input/select/textarea; use point_and_wait.
-4. Never invent targetId or route; pick exact values from input.`;
+3. NEVER auto-click sensitive:true, demo buttons (unless asked), or inputs; use point_and_wait.
+4. Never invent targetId/route. Return "complete" as soon as the user's goal (e.g. reaching overview after login) is done.`;
 
 /**
  * Conservative token estimator used for unit assertions on prompt budgets.
@@ -82,8 +82,23 @@ function isInputLikeElement(el: PageMapElement): boolean {
   return tag === 'input' || tag === 'select' || tag === 'textarea';
 }
 
+function isDemoControl(el: PageMapElement): boolean {
+  return /\bdemo\b|try-demo|sample-account|quick-demo/i.test(`${el.id} ${el.label}`);
+}
+
+function isAuthRoutePath(route: string): boolean {
+  const lower = (route || '').toLowerCase();
+  return (
+    lower === '/login' ||
+    lower === '/signin' ||
+    lower.startsWith('/auth') ||
+    lower.endsWith('/login') ||
+    lower.endsWith('/signin')
+  );
+}
+
 function isNoiseControl(el: PageMapElement): boolean {
-  return /\b(cancel|close|dismiss|back|prev|previous|next|logout|sign\s*out|toggle|theme|aesthetic|forgot|copy|clear)\b/i.test(
+  return /\b(cancel|close|dismiss|back|prev|previous|next|logout|sign\s*out|signout|toggle|theme|aesthetic|forgot|copy|clear)\b/i.test(
     `${el.id} ${el.label}`
   );
 }
@@ -387,15 +402,13 @@ function extractGoalKeywords(goal: string): string[] {
 }
 
 function scoreElement(el: PageMapElement, keywords: string[], wantsDemo = false): number {
+  if (!wantsDemo && isDemoControl(el)) return 0;
   const hay = `${el.id} ${el.label} ${el.type}`.toLowerCase();
   let score = 0;
   for (const kw of keywords) {
     if (hay.includes(kw)) {
       score += el.id.toLowerCase().includes(kw) ? 4 : 3;
     }
-  }
-  if (score > 0 && !wantsDemo && /\bdemo\b/i.test(`${el.id} ${el.label}`)) {
-    score = Math.max(1, score - 3);
   }
   return score;
 }
@@ -983,6 +996,39 @@ export function buildDeterministicGuideStep(params: {
   const lowerGoal = goal.toLowerCase();
   const prevLower = previousStepSummary.toLowerCase();
   const keywords = extractGoalKeywords(goal);
+  const wantsDemo = /\b(demo|sample|preview|trial)\b/i.test(lowerGoal);
+  const { intents } = expandGoalStems(goal);
+
+  // Strict goal scoping: if user asked to log in / sign in (with no secondary post-login action),
+  // complete immediately once the browser has reached a non-auth overview/portal route.
+  const hasPostLoginTask =
+    /\b(add|create|enroll|invite|import|upload|export|download|delete|remove|edit|update|void|pay|payment|fee|deposit|bulk|batch|report|statement|password|reset|profile|notification|notice|ledger|institution|audit|receipt|settings)\b/i.test(
+      lowerGoal
+    );
+  const isLoginOnlyGoal =
+    (intents.has('signin') || /\b(log\s*in|sign\s*in|login|signin)\b/i.test(lowerGoal)) &&
+    !hasPostLoginTask;
+
+  if (
+    isLoginOnlyGoal &&
+    !isAuthRoutePath(currentRoute) &&
+    (stepNumber >= 2 ||
+      prevLower.includes('login') ||
+      prevLower.includes('sign in') ||
+      prevLower.includes('signin'))
+  ) {
+    return sanitizeGuideStepDecision(
+      {
+        action: 'complete',
+        tip: 'Signed in and on the overview page.',
+      },
+      pageMap,
+      stepNumber
+    );
+  }
+
+  // Filter out demo controls completely unless user explicitly asked for demo
+  const candidatePool = wantsDemo ? pageMap : pageMap.filter((el) => !isDemoControl(el));
 
   // Honor confirmed target route or target element on Step 1
   if (stepNumber === 1) {
@@ -1004,7 +1050,7 @@ export function buildDeterministicGuideStep(params: {
     }
 
     if (preferredTargetId && !prevLower.includes(preferredTargetId.toLowerCase())) {
-      const prefEl = pageMap.find((el) => el.id === preferredTargetId);
+      const prefEl = candidatePool.find((el) => el.id === preferredTargetId);
       if (prefEl) {
         if (prefEl.sensitive || isInputLikeElement(prefEl)) {
           return sanitizeGuideStepDecision(
@@ -1032,16 +1078,14 @@ export function buildDeterministicGuideStep(params: {
     }
   }
 
-  const wantsDemo = /\b(demo|sample|preview|trial)\b/i.test(lowerGoal);
-
-  // Rank visible page controls against goal keywords
-  const ranked = [...pageMap]
+  // Rank visible page controls against goal keywords (never demo unless requested)
+  const ranked = [...candidatePool]
     .map((el) => ({ el, score: scoreElement(el, keywords, wantsDemo) }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score);
 
   // Skip already-filled inputs so step progression moves forward cleanly
-  const unfilledInput = pageMap.find(
+  const unfilledInput = candidatePool.find(
     (el) =>
       isInputLikeElement(el) &&
       !el.hasValue &&
@@ -1049,8 +1093,8 @@ export function buildDeterministicGuideStep(params: {
       !el.id.includes('search')
   );
 
-  // Prefer unvisited, unfilled modal/drawer/form inputs before suggesting sensitive submit buttons
-  const unvisitedFormInputs = pageMap.filter(
+  // Prefer unvisited, unfilled modal/drawer/form inputs before suggesting submit buttons
+  const unvisitedFormInputs = candidatePool.filter(
     (el) =>
       isInputLikeElement(el) &&
       !el.hasValue &&
@@ -1078,12 +1122,13 @@ export function buildDeterministicGuideStep(params: {
   }
 
   const isCancelOrClose = (el: PageMapElement): boolean =>
-    /\b(cancel|close|dismiss|back|prev|logout)\b/i.test(`${el.id} ${el.label}`);
+    /\b(cancel|close|dismiss|back|prev|logout|signout|sign\s*out)\b/i.test(`${el.id} ${el.label}`);
 
-  // When a drawer/dialog submit/save/create button is visible and all drawer inputs are handled, guide manually to it
-  const visibleSubmitBtn = pageMap.find(
+  // When a drawer/dialog submit/save/create button is visible and all form inputs are handled, guide manually to it
+  const visibleSubmitBtn = candidatePool.find(
     (el) =>
       el.sensitive &&
+      !isCancelOrClose(el) &&
       !prevLower.includes(el.id.toLowerCase()) &&
       /(submit|save|create|confirm|pay|post|import)/i.test(`${el.id} ${el.label}`)
   );
@@ -1215,33 +1260,16 @@ export function buildDeterministicGuideStep(params: {
     );
   }
 
-  // Otherwise check for sensitive final action button to highlight manually before completing
-  const sensitiveBtn = pageMap.find(
-    (el) => el.sensitive && !prevLower.includes(el.id.toLowerCase())
-  );
-  if (sensitiveBtn && stepNumber >= 2) {
-    return sanitizeGuideStepDecision(
-      {
-        action: 'point_and_wait',
-        targetId: sensitiveBtn.id,
-        tip: `Click "${sensitiveBtn.label || sensitiveBtn.id}" manually to finish.`,
-      },
-      pageMap,
-      stepNumber
-    );
-  }
-
   // If Step 1 had a generic request (e.g. clicking "Guide Me" with empty input), highlight a main action on screen
   if (stepNumber === 1) {
     const firstAction =
-      pageMap.find(
+      candidatePool.find(
         (el) =>
           !el.sensitive &&
-          !el.id.includes('logout') &&
+          !isCancelOrClose(el) &&
           !el.id.includes('theme') &&
-          !el.id.includes('aesthetic') &&
-          !el.id.includes('close')
-      ) || pageMap[0];
+          !el.id.includes('aesthetic')
+      ) || candidatePool[0];
     if (firstAction) {
       return sanitizeGuideStepDecision(
         {
@@ -1258,7 +1286,7 @@ export function buildDeterministicGuideStep(params: {
   return sanitizeGuideStepDecision(
     {
       action: 'complete',
-      tip: 'You are in the right place to finish this task.',
+      tip: 'You are in the right place. Guide complete.',
     },
     pageMap,
     stepNumber

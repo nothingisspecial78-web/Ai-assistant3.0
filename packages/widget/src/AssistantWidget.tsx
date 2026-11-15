@@ -20,11 +20,28 @@ import { HistoryDrawer } from './components/HistoryDrawer.tsx';
 import { MessageList } from './components/MessageList.tsx';
 import { Panel } from './components/Panel.tsx';
 import { PersonalizationModal } from './components/PersonalizationModal.tsx';
+import { ScreenShareGlow } from './components/ScreenShareGlow.tsx';
+import { UserCursorOverlay } from './components/UserCursorOverlay.tsx';
 import { GuideCursor, GuideEngine, GuideOverlay } from './guide/index.ts';
 import { useChatStorage } from './hooks/useChatStorage.ts';
 import { useChatStream } from './hooks/useChatStream.ts';
 import { type StartGuideOptions, useGuideCoBrowser } from './hooks/useGuideCoBrowser.ts';
 import { ensureWidgetStyles } from './styles.ts';
+
+function resolveWebAppName(appName: string | undefined, title: string, appId: string): string {
+  if (appName && appName.trim()) return appName.trim();
+  if (typeof document !== 'undefined' && document.title) {
+    const docBrand = document.title.split(/[—|]/)[0]?.trim();
+    if (docBrand && docBrand.length >= 2 && docBrand.length <= 36) {
+      return docBrand;
+    }
+  }
+  const strippedTitle = title
+    .replace(/\s+(?:ai\s+)?(?:agent|assistant)\s*$/i, '')
+    .trim();
+  if (strippedTitle) return strippedTitle;
+  return appId || 'App';
+}
 
 export interface AssistantWidgetTheme {
   primaryColor?: string;
@@ -38,6 +55,7 @@ export interface AssistantWidgetTheme {
 export interface AssistantWidgetProps {
   appId: string;
   apiUrl: string;
+  appName?: string;
   userKey?: string;
   userLabel?: string;
   getPageId?: () => string;
@@ -57,6 +75,7 @@ export interface AssistantWidgetProps {
 export function AssistantWidget({
   appId,
   apiUrl,
+  appName,
   userKey,
   userLabel,
   getPageId,
@@ -74,6 +93,7 @@ export function AssistantWidget({
 }: AssistantWidgetProps) {
   const [open, setOpen] = useState(false);
   const [inspecting, setInspecting] = useState(false);
+  const [agentCursorActive, setAgentCursorActive] = useState(false);
   const [panelWidth, setPanelWidth] = useState(0);
   const [celebrateTick, setCelebrateTick] = useState(0);
   const [pendingContexts, setPendingContexts] = useState<RightClickContext[]>([]);
@@ -351,16 +371,12 @@ export function AssistantWidget({
       onDetectedError: (msg) => {
         setDetectedError(msg);
       },
-      onComplete: (g) => {
+      onComplete: () => {
         setCelebrateTick((c) => c + 1);
         setActiveGuide(null);
         setActiveStep(null);
         setTargetRect(null);
         setSavedGuideProgress(null);
-        setOpen(true);
-        void sendMessageRef.current({
-          text: `I've finished the walkthrough for "${g.title.en}". What would you like to do next?`,
-        });
       },
       onAbort: () => {
         setActiveGuide(null);
@@ -572,9 +588,33 @@ export function AssistantWidget({
     ...(theme?.textColor ? { '--aia-text': theme.textColor } : {}),
   };
 
+  const resolvedAppName = useMemo(
+    () => resolveWebAppName(appName, title, appId),
+    [appName, title, appId]
+  );
+
+  const isScreenSharing =
+    guideCoBrowser.active || Boolean(activeGuide) || inspecting || agentCursorActive;
+  const screenShareModeLabel = inspecting
+    ? 'Screen Shared · Inspecting'
+    : guideCoBrowser.active || activeGuide
+      ? 'Screen Shared · Live Guide'
+      : 'Screen Shared · Agent Active';
+
   return (
     <div className="aia-root" style={rootStyle}>
-      <AgentCursorOverlay />
+      <UserCursorOverlay enabled={enabled && !inspecting} label="You" />
+
+      <ScreenShareGlow
+        active={isScreenSharing}
+        appName={resolvedAppName}
+        modeLabel={screenShareModeLabel}
+      />
+
+      <AgentCursorOverlay
+        appName={resolvedAppName}
+        onActiveChange={setAgentCursorActive}
+      />
 
       <ContextMenu
         enabled={enabled && !inspecting}
@@ -865,6 +905,7 @@ export function AssistantWidget({
 
       <GuideCursor
         active={guideCoBrowser.active}
+        appName={resolvedAppName}
         stepNumber={guideCoBrowser.stepNumber}
         maxSteps={guideCoBrowser.maxSteps}
         loading={guideCoBrowser.loading}

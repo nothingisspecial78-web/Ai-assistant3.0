@@ -5,7 +5,7 @@ import {
   type DeclarativeToolDefinition,
 } from '@ai-assistant/core';
 import type { AccessScope } from '../security/scope.ts';
-import { resolveAppBaseUrl } from '../auth.ts';
+import { appInternalFetch, resolveAppBaseUrl } from '../auth.ts';
 import { KHAZNA_BUILTIN_TOOLS } from './khaznaTools.ts';
 import { DATA_ACCESS_TOOLS } from './dataAccessTools.ts';
 import { GUIDE_TOOLS } from './guideTools.ts';
@@ -28,7 +28,7 @@ async function callConnectedAppApi(
     headers.Authorization = `Bearer ${ctx.authToken}`;
   }
 
-  const res = await fetch(targetUrl, {
+  const res = await appInternalFetch(targetUrl, {
     method,
     headers,
     body: body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined,

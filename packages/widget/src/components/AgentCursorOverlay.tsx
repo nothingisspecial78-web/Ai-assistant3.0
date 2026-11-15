@@ -46,9 +46,23 @@ function findWaypointElement(wp: CursorWaypoint): Element | null {
   return null;
 }
 
-export function AgentCursorOverlay() {
+export interface AgentCursorOverlayProps {
+  appName?: string;
+  onActiveChange?: (active: boolean) => void;
+}
+
+export function AgentCursorOverlay({
+  appName = 'App',
+  onActiveChange,
+}: AgentCursorOverlayProps) {
   const [frame, setFrame] = useState<CursorFrame | null>(null);
   const runIdRef = useRef(0);
+  const onActiveChangeRef = useRef(onActiveChange);
+  onActiveChangeRef.current = onActiveChange;
+
+  useEffect(() => {
+    onActiveChangeRef.current?.(Boolean(frame));
+  }, [frame]);
 
   useEffect(() => {
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -132,11 +146,14 @@ export function AgentCursorOverlay() {
     window.addEventListener('aia:cursor-waypoints', handleWaypoints);
     return () => {
       runIdRef.current += 1;
+      onActiveChangeRef.current?.(false);
       window.removeEventListener('aia:cursor-waypoints', handleWaypoints);
     };
   }, []);
 
   if (!frame) return null;
+
+  const displayAppName = appName.trim() || 'App';
 
   return (
     <div
@@ -195,9 +212,9 @@ export function AgentCursorOverlay() {
             />
           )}
           <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
+            width="28"
+            height="28"
+            viewBox="0 0 28 28"
             fill="none"
             style={{
               filter: 'drop-shadow(0 4px 8px rgba(15, 23, 42, 0.35))',
@@ -206,10 +223,10 @@ export function AgentCursorOverlay() {
             }}
           >
             <path
-              d="M4.5 3.5L19.5 11.2L12.6 13.4L9.8 20.2L4.5 3.5Z"
+              d="M4.5 3.5L23.5 11.2L15.1 14.4L11.8 22.8L4.5 3.5Z"
               fill="#f97316"
               stroke="#ffffff"
-              strokeWidth="1.8"
+              strokeWidth="2"
               strokeLinejoin="round"
             />
           </svg>
@@ -218,19 +235,37 @@ export function AgentCursorOverlay() {
         <div
           style={{
             marginTop: '14px',
-            padding: '4px 10px',
-            borderRadius: '8px',
-            background: 'rgba(15, 23, 42, 0.92)',
-            color: '#ffffff',
-            border: '1px solid rgba(249, 115, 22, 0.45)',
-            fontSize: '11.5px',
-            fontWeight: 600,
-            fontFamily: 'var(--aia-font-sans)',
-            whiteSpace: 'nowrap',
-            boxShadow: '0 8px 20px rgba(15, 23, 42, 0.3)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-start',
+            gap: '4px',
           }}
         >
-          {frame.label}
+          <span
+            data-testid="agent-cursor-app-pill"
+            className="aia-cursor-name-pill aia-cursor-name-pill-agent"
+            style={{ position: 'static' }}
+          >
+            {displayAppName}
+          </span>
+          {frame.label && (
+            <div
+              style={{
+                padding: '3px 9px',
+                borderRadius: '8px',
+                background: 'rgba(15, 23, 42, 0.9)',
+                color: '#ffffff',
+                border: '1px solid rgba(249, 115, 22, 0.35)',
+                fontSize: '11px',
+                fontWeight: 600,
+                fontFamily: 'var(--aia-font-sans)',
+                whiteSpace: 'nowrap',
+                boxShadow: '0 8px 20px rgba(15, 23, 42, 0.3)',
+              }}
+            >
+              {frame.label}
+            </div>
+          )}
         </div>
       </div>
     </div>

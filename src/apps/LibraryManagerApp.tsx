@@ -340,6 +340,7 @@ export function LibraryManagerApp({ onSwitchApp }: { onSwitchApp: () => void }) 
 
       <AssistantWidget
         appId="second-demo"
+        appName="Campus Library"
         apiUrl=""
         getAuthToken={() => TOKEN}
         title="Campus Library Assistant"

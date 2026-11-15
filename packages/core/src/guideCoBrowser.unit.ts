@@ -397,6 +397,49 @@ describe('Guide Co-Browser Pure Logic', () => {
     });
     assert.equal(step.action, 'click_safe');
     assert.equal(step.targetId, 'login-role-student');
+
+    // Step 2: even when login-role-student is already in prevLower, never pick login-demo-student-btn
+    const stepAfterRole = buildDeterministicGuideStep({
+      goal: 'guide me to login as student',
+      previousStepSummary: 'Clicked login-role-student (Student)',
+      pageMap: [
+        { id: 'login-demo-student-btn', tag: 'button', type: 'button', label: 'Student', hasValue: false, currentRoute: '/login' },
+        { id: 'login-student-admission-input', tag: 'input', type: 'text', label: 'Admission number', hasValue: false, currentRoute: '/login' },
+        { id: 'login-submit-btn', tag: 'button', type: 'submit', label: 'Sign in as Student', hasValue: false, currentRoute: '/login' },
+      ],
+      stepNumber: 2,
+      currentRoute: '/login',
+      confirmedPath: true,
+    });
+    assert.equal(stepAfterRole.action, 'point_and_wait');
+    assert.equal(stepAfterRole.targetId, 'login-student-admission-input');
+
+    // Step 4 on /app overview: stops immediately instead of clicking unrelated controls on student portal
+    const overviewStep = buildDeterministicGuideStep({
+      goal: 'guide me to login as student',
+      previousStepSummary: 'Clicked login-role-student -> Guided user to login-student-admission-input -> Clicked login-submit-btn',
+      pageMap: [
+        { id: 'student-combined-statement-btn', tag: 'button', type: 'button', label: 'Download statement', hasValue: false, currentRoute: '/app' },
+        { id: 'user-menu-signout-btn', tag: 'button', type: 'button', label: 'Sign out', hasValue: false, currentRoute: '/app', sensitive: true },
+      ],
+      stepNumber: 4,
+      currentRoute: '/app',
+      confirmedPath: true,
+    });
+    assert.equal(overviewStep.action, 'complete');
+
+    // Sector manager login also stops cleanly upon reaching manager overview
+    const managerOverviewStep = buildDeterministicGuideStep({
+      goal: 'guide me how to log in using "Sector Manager"',
+      previousStepSummary: 'Clicked login-role-manager -> Clicked login-submit-btn',
+      pageMap: [
+        { id: 'nav-ledger-link', tag: 'a', type: 'link', label: 'Ledger', hasValue: false, currentRoute: '/m/dept-fiqh' },
+      ],
+      stepNumber: 5,
+      currentRoute: '/m/dept-fiqh',
+      confirmedPath: true,
+    });
+    assert.equal(managerOverviewStep.action, 'complete');
   });
 });
 

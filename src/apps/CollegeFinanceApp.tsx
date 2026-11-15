@@ -919,6 +919,7 @@ export function CollegeFinanceApp({ onSwitchApp }: { onSwitchApp: () => void }) 
 
       <AssistantWidget
         appId="college-finance"
+        appName="College Finance"
         apiUrl=""
         getAuthToken={() => TOKEN}
         title="College Finance Assistant"

@@ -1,4 +1,6 @@
-import type { NextFunction, Request, Response } from 'express';
+import { IncomingMessage, ServerResponse } from 'node:http';
+import { PassThrough } from 'node:stream';
+import type { Express, NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import type { AppProfile } from '@ai-assistant/core';
 import { logger, type ServerConfig } from './config.ts';
@@ -45,6 +47,12 @@ const SERVICE_BINDING_RULES: Array<{
   },
 ];
 
+let localExpressApp: Express | null = null;
+
+export function registerLocalExpressApp(app: Express | null): void {
+  localExpressApp = app;
+}
+
 export function resolveAppBaseUrl(
   baseUrl: string,
   serverPort: number,
@@ -66,6 +74,95 @@ export function resolveAppBaseUrl(
 
   // In single-port container environments, allow localhost:3000 in profile.json to track actual server port
   return baseUrl.replace('http://localhost:3000', `http://127.0.0.1:${serverPort}`);
+}
+
+async function dispatchInProcess(
+  app: Express,
+  url: URL,
+  init: { method?: string; headers?: Record<string, string>; body?: string } = {}
+): Promise<globalThis.Response> {
+  const socket = new PassThrough();
+  const req = new IncomingMessage(socket as unknown as import('node:net').Socket);
+  req.method = (init.method || 'GET').toUpperCase();
+  req.url = `${url.pathname}${url.search}`;
+
+  const normalizedHeaders: Record<string, string> = {};
+  for (const [k, v] of Object.entries(init.headers || {})) {
+    if (v !== undefined) normalizedHeaders[k.toLowerCase()] = String(v);
+  }
+  normalizedHeaders.host = url.host;
+  if (init.body !== undefined) {
+    const buf = Buffer.from(init.body, 'utf8');
+    normalizedHeaders['content-length'] = String(buf.byteLength);
+    socket.push(buf);
+  }
+  socket.push(null);
+  req.headers = normalizedHeaders;
+
+  return new Promise<globalThis.Response>((resolve, reject) => {
+    const res = new ServerResponse(req);
+    const chunks: Buffer[] = [];
+    const origWrite = res.write.bind(res);
+    const origEnd = res.end.bind(res);
+
+    res.write = ((chunk: unknown, encoding?: unknown, cb?: unknown) => {
+      if (chunk !== undefined && chunk !== null) {
+        chunks.push(
+          Buffer.isBuffer(chunk)
+            ? chunk
+            : Buffer.from(String(chunk), typeof encoding === 'string' ? (encoding as BufferEncoding) : 'utf8')
+        );
+      }
+      return origWrite(chunk as never, encoding as never, cb as never);
+    }) as typeof res.write;
+
+    res.end = ((chunk?: unknown, encoding?: unknown, cb?: unknown) => {
+      if (chunk !== undefined && chunk !== null && typeof chunk !== 'function') {
+        chunks.push(
+          Buffer.isBuffer(chunk)
+            ? chunk
+            : Buffer.from(String(chunk), typeof encoding === 'string' ? (encoding as BufferEncoding) : 'utf8')
+        );
+      }
+      const ret = origEnd(chunk as never, encoding as never, cb as never);
+      const rawHeaders = res.getHeaders();
+      const outHeaders = new Headers();
+      for (const [hk, hv] of Object.entries(rawHeaders)) {
+        if (Array.isArray(hv)) {
+          for (const item of hv) outHeaders.append(hk, String(item));
+        } else if (hv !== undefined) {
+          outHeaders.set(hk, String(hv));
+        }
+      }
+      resolve(
+        new globalThis.Response(Buffer.concat(chunks), {
+          status: res.statusCode || 200,
+          statusText: res.statusMessage || '',
+          headers: outHeaders,
+        })
+      );
+      return ret;
+    }) as typeof res.end;
+
+    res.on('error', reject);
+    app(req as unknown as Request, res as unknown as Response);
+  });
+}
+
+export async function appInternalFetch(
+  targetUrl: URL,
+  init: { method?: string; headers?: Record<string, string>; body?: string } = {}
+): Promise<globalThis.Response> {
+  const isLocalTarget =
+    targetUrl.hostname === '127.0.0.1' ||
+    targetUrl.hostname === 'localhost' ||
+    targetUrl.hostname === '::1';
+
+  if (localExpressApp && isLocalTarget) {
+    return dispatchInProcess(localExpressApp, targetUrl, init);
+  }
+
+  return fetch(targetUrl, init);
 }
 
 export async function verifyUserToken(params: {
@@ -135,7 +232,7 @@ export async function verifyUserToken(params: {
       const base = resolveAppBaseUrl(profile.api.baseUrl, cfg.port, profile.appId).replace(/\/$/, '');
       const relativeEndpoint = profile.api.meEndpoint.replace(/^\/+/, '');
       const targetUrl = new URL(relativeEndpoint, `${base}/`);
-      const res = await fetch(targetUrl, {
+      const res = await appInternalFetch(targetUrl, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${cleanToken}`,

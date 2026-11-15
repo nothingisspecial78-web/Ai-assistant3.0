@@ -660,6 +660,184 @@ export function ensureWidgetStyles(): void {
       background: rgba(220, 38, 38, 0.92);
       color: #ffffff;
     }
+
+    /* Cursor name-tag pills ("You" & Web App Name) */
+    .aia-cursor-name-pill {
+      position: absolute;
+      left: 17px;
+      top: 19px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 9px;
+      border-radius: 9999px;
+      font-family: var(--aia-font-sans, ui-sans-serif, system-ui, sans-serif);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      line-height: 1.4;
+      white-space: nowrap;
+      max-width: 170px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border: 1.5px solid rgba(255, 255, 255, 0.92);
+      box-shadow: 0 6px 16px -4px rgba(15, 23, 42, 0.45);
+      pointer-events: none;
+    }
+    .aia-cursor-name-pill-agent {
+      background: linear-gradient(135deg, #f97316, #ea580c);
+      color: #ffffff;
+    }
+    .aia-cursor-name-pill-sensitive {
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      color: #ffffff;
+    }
+    .aia-cursor-name-pill-you {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #ffffff;
+    }
+
+    /* Custom Agent-Style User Mouse Cursor */
+    html.aia-custom-user-cursor,
+    html.aia-custom-user-cursor * {
+      cursor: none !important;
+    }
+    .aia-user-cursor-root {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483030;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .aia-user-cursor-pointer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+      will-change: transform;
+      filter: drop-shadow(0 5px 10px rgba(15, 23, 42, 0.38));
+      transition: opacity 140ms ease;
+    }
+    .aia-user-cursor-pointer[data-pressed="true"] svg {
+      transform: scale(0.88);
+    }
+    .aia-user-cursor-pointer svg {
+      transition: transform 90ms ease-out;
+    }
+
+    /* Gemini Live-Style Screen-Sharing Perimeter Glow & Pill */
+    @keyframes aia-gemini-glow-shift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    @keyframes aia-gemini-aura-breathe {
+      0%, 100% {
+        opacity: 0.85;
+        box-shadow:
+          inset 0 0 0 2px rgba(96, 165, 250, 0.55),
+          inset 0 0 26px rgba(59, 130, 246, 0.34),
+          inset 0 0 64px rgba(139, 92, 246, 0.2),
+          inset 0 0 110px rgba(34, 211, 238, 0.14);
+      }
+      50% {
+        opacity: 1;
+        box-shadow:
+          inset 0 0 0 2.5px rgba(34, 211, 238, 0.72),
+          inset 0 0 36px rgba(99, 102, 241, 0.42),
+          inset 0 0 84px rgba(168, 85, 247, 0.26),
+          inset 0 0 130px rgba(59, 130, 246, 0.18);
+      }
+    }
+    @keyframes aia-gemini-orb-pulse {
+      0%, 100% { transform: scale(1); opacity: 0.95; }
+      50% { transform: scale(1.22); opacity: 0.65; }
+    }
+    .aia-live-glow-root {
+      position: fixed;
+      inset: 0;
+      z-index: 2147483008;
+      pointer-events: none;
+    }
+    .aia-live-glow-aura {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      animation: aia-gemini-aura-breathe 2.8s ease-in-out infinite;
+    }
+    .aia-live-glow-border {
+      position: fixed;
+      inset: 0;
+      padding: 3px;
+      pointer-events: none;
+      background: linear-gradient(
+        120deg,
+        rgba(34, 211, 238, 0.9),
+        rgba(59, 130, 246, 0.95),
+        rgba(139, 92, 246, 0.92),
+        rgba(249, 115, 22, 0.72),
+        rgba(34, 211, 238, 0.9)
+      );
+      background-size: 260% 260%;
+      animation: aia-gemini-glow-shift 5.5s ease infinite;
+      -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+    }
+    .aia-live-share-pill {
+      position: fixed;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2147483019;
+      pointer-events: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      background: rgba(15, 23, 42, 0.88);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      border: 1px solid rgba(96, 165, 250, 0.55);
+      box-shadow:
+        0 0 22px rgba(59, 130, 246, 0.35),
+        0 10px 26px -8px rgba(15, 23, 42, 0.6);
+      color: #f8fafc;
+      font-family: var(--aia-font-sans, ui-sans-serif, system-ui, sans-serif);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+    }
+    .aia-live-share-orb {
+      width: 9px;
+      height: 9px;
+      border-radius: 9999px;
+      background: radial-gradient(circle at 30% 30%, #67e8f9, #3b82f6 65%, #8b5cf6);
+      box-shadow: 0 0 10px rgba(34, 211, 238, 0.85);
+      animation: aia-gemini-orb-pulse 1.6s ease-in-out infinite;
+    }
+    .aia-live-share-tag {
+      padding: 1px 7px;
+      border-radius: 9999px;
+      background: rgba(59, 130, 246, 0.22);
+      border: 1px solid rgba(96, 165, 250, 0.4);
+      color: #93c5fd;
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .aia-live-glow-aura,
+      .aia-live-glow-border,
+      .aia-live-share-orb {
+        animation: none !important;
+      }
+    }
   `;
   document.head.appendChild(style);
 }

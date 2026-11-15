@@ -73,10 +73,56 @@ function mergeAvailableRoutes(
   for (const r of [...domRoutes, ...hostRoutes]) {
     if (!r?.route || seen.has(r.route)) continue;
     seen.add(r.route);
-    merged.push({ route: r.route, label: r.label || r.route });
+    merged.push({
+      route: r.route.slice(0, 300),
+      label: (r.label || r.route).slice(0, 100),
+    });
     if (merged.length >= 40) break;
   }
   return merged;
+}
+
+function compactStepHistory(history: string[], maxChars = 380): string {
+  const recent = history.slice(-8);
+  let joined = recent.join(' -> ');
+  while (joined.length > maxChars && recent.length > 1) {
+    recent.shift();
+    joined = recent.join(' -> ');
+  }
+  if (joined.length > maxChars) {
+    return joined.slice(-maxChars);
+  }
+  return joined;
+}
+
+function sanitizePageMapForApi(items: PageMapElement[]): PageMapElement[] {
+  return items
+    .filter((el) => Boolean(el.id && el.tag && el.type))
+    .slice(0, 200)
+    .map((el) => ({
+      id: el.id.slice(0, 180),
+      tag: el.tag.slice(0, 32),
+      type: el.type.slice(0, 40),
+      label: (el.label || '').slice(0, 160),
+      hasValue: Boolean(el.hasValue),
+      currentRoute: (el.currentRoute || '/').slice(0, 300),
+      ...(el.sensitive ? { sensitive: true } : {}),
+    }));
+}
+
+async function waitForPageTransitionIfBusy(maxWaitMs = 2200): Promise<void> {
+  if (typeof document === 'undefined' || typeof window === 'undefined') return;
+  const startRoute = window.location.pathname;
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    const busyEl = Array.from(document.querySelectorAll('[aria-busy="true"]')).find(
+      (el) => !el.closest('.aia-root')
+    );
+    if (!busyEl || window.location.pathname !== startRoute) {
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 120));
+  }
 }
 
 export function useGuideCoBrowser({
@@ -106,6 +152,7 @@ export function useGuideCoBrowser({
   const sessionTokenRef = useRef(0);
   const summaryHistoryRef = useRef<string[]>([]);
   const activeGoalRef = useRef('');
+  const pausedRouteRef = useRef('');
   const targetElRef = useRef<HTMLElement | null>(null);
   const timersRef = useRef<number[]>([]);
   const onNavigateRef = useRef(onNavigate);
@@ -212,6 +259,14 @@ export function useGuideCoBrowser({
         targetElRef.current = null;
         setTargetRect(null);
         setTargetMissing(false);
+        setPausedForInput(false);
+        // Automatically close the guide shortly after showing the completion feedback
+        const autoCloseTimer = window.setTimeout(() => {
+          if (sessionToken === sessionTokenRef.current) {
+            stopGuide();
+          }
+        }, 1600);
+        timersRef.current.push(autoCloseTimer);
         return;
       }
 
@@ -242,6 +297,8 @@ export function useGuideCoBrowser({
         targetElRef.current = null;
         setTargetRect(null);
         setTargetMissing(true);
+        pausedRouteRef.current =
+          typeof window !== 'undefined' ? window.location.pathname : '/';
         setPausedForInput(true);
         return;
       }
@@ -280,7 +337,7 @@ export function useGuideCoBrowser({
             if (sessionToken === sessionTokenRef.current) {
               onAdvance(stepNum + 1, sessionToken);
             }
-          }, 650);
+          }, 680);
           timersRef.current.push(tNext);
         }, 420);
         timersRef.current.push(tClick);
@@ -299,10 +356,12 @@ export function useGuideCoBrowser({
         }
       }
 
+      pausedRouteRef.current =
+        typeof window !== 'undefined' ? window.location.pathname : '/';
       summaryHistoryRef.current.push(`Guided user to ${normalized.targetId} (${label})`);
       setPausedForInput(true);
     },
-    []
+    [stopGuide]
   );
 
   const requestGuideStep = useCallback(
@@ -327,15 +386,37 @@ export function useGuideCoBrowser({
         headers.Authorization = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
       }
 
+      const sanitizedPayload = {
+        ...payload,
+        goal: payload.goal.slice(0, 750),
+        previousStepSummary: payload.previousStepSummary.slice(-1400),
+        currentRoute: (payload.currentRoute || '/').slice(0, 300),
+        pageMap: sanitizePageMapForApi(payload.pageMap),
+        ...(payload.preferredTargetId
+          ? { preferredTargetId: payload.preferredTargetId.slice(0, 180) }
+          : {}),
+        ...(payload.preferredRoute
+          ? { preferredRoute: payload.preferredRoute.slice(0, 300) }
+          : {}),
+        ...(payload.appContext ? { appContext: payload.appContext.slice(0, 500) } : {}),
+      };
+
       const base = apiUrl ? apiUrl.replace(/\/$/, '') : '';
       const res = await fetch(`${base}/api/guide-step`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(payload),
+        body: JSON.stringify(sanitizedPayload),
       });
 
       if (!res.ok) {
-        throw new Error(`Guide step failed (${res.status})`);
+        let msg = `Guide step failed (${res.status})`;
+        try {
+          const errBody = (await res.json()) as { error?: string };
+          if (errBody?.error) msg = errBody.error;
+        } catch {
+          // keep status message
+        }
+        throw new Error(msg);
       }
 
       return (await res.json()) as GuideStepResponse;
@@ -350,10 +431,16 @@ export function useGuideCoBrowser({
       if (stepNum > MAX_GUIDE_STEPS) {
         setDecision({
           action: 'complete',
-          tip: truncateTipWords('Reached 10-step guide limit. Please finish remaining steps manually.'),
+          tip: truncateTipWords('Reached 10-step guide limit. Guide closing.'),
         });
         setPausedForInput(false);
         setLoading(false);
+        const autoCloseTimer = window.setTimeout(() => {
+          if (sessionToken === sessionTokenRef.current) {
+            stopGuide();
+          }
+        }, 1600);
+        timersRef.current.push(autoCloseTimer);
         return;
       }
 
@@ -363,6 +450,10 @@ export function useGuideCoBrowser({
       setSensitiveBlocked(false);
       setError(null);
 
+      // If previous click triggered an async transition (e.g. login -> leaving animation), wait briefly for destination DOM
+      await waitForPageTransitionIfBusy(2200);
+      if (sessionToken !== sessionTokenRef.current) return;
+
       const currentRoute =
         typeof window !== 'undefined' ? window.location.pathname : '/';
       const pageMap: PageMapElement[] = getPageMap({ currentRoute });
@@ -370,7 +461,7 @@ export function useGuideCoBrowser({
       const hostRoutes = getHostRoutesRef.current ? getHostRoutesRef.current() : [];
       const availableRoutes = mergeAvailableRoutes(domRoutes, hostRoutes);
       const appContext = getAppContextRef.current ? getAppContextRef.current() : undefined;
-      const previousStepSummary = summaryHistoryRef.current.slice(-10).join(' -> ');
+      const previousStepSummary = compactStepHistory(summaryHistoryRef.current, 380);
 
       try {
         const rawDecision = await requestGuideStep({
@@ -395,17 +486,17 @@ export function useGuideCoBrowser({
         setError(err instanceof Error ? err.message : 'Unable to fetch guide step.');
       }
     },
-    [applyStepDecision, requestGuideStep]
+    [applyStepDecision, requestGuideStep, stopGuide]
   );
 
-  // When paused on a sensitive button or interactive control, clicking it directly or pressing Enter on an input can advance cleanly
+  // When paused on a sensitive button or interactive control, clicking it directly, pressing Enter, or navigating forward advances cleanly
   useEffect(() => {
     if (!active || !pausedForInput || !decision) return;
     const el = targetElRef.current;
-    if (!el) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
+        el &&
         e.key === 'Enter' &&
         el.tagName.toLowerCase() === 'input' &&
         document.activeElement === el
@@ -417,24 +508,44 @@ export function useGuideCoBrowser({
     };
 
     const handleManualButtonClick = () => {
-      if (isSensitiveDomElement(el) || !isInputControl(el)) {
+      if (el && (isSensitiveDomElement(el) || !isInputControl(el))) {
         const tok = sessionTokenRef.current;
         const t = window.setTimeout(() => {
           if (tok === sessionTokenRef.current) {
             void fetchNextStep(stepNumber + 1, tok);
           }
-        }, 380);
+        }, 420);
         timersRef.current.push(t);
       }
     };
 
-    el.addEventListener('keydown', handleKeyDown);
-    if (!isInputControl(el)) {
-      el.addEventListener('click', handleManualButtonClick);
+    let routeCheckTriggered = false;
+    const checkRouteChanged = () => {
+      if (routeCheckTriggered) return;
+      const nowRoute = typeof window !== 'undefined' ? window.location.pathname : '/';
+      if (pausedRouteRef.current && nowRoute !== pausedRouteRef.current) {
+        routeCheckTriggered = true;
+        const tok = sessionTokenRef.current;
+        void fetchNextStep(stepNumber + 1, tok);
+      }
+    };
+
+    const routePoll = window.setInterval(checkRouteChanged, 260);
+    window.addEventListener('popstate', checkRouteChanged);
+
+    if (el) {
+      el.addEventListener('keydown', handleKeyDown);
+      if (!isInputControl(el)) {
+        el.addEventListener('click', handleManualButtonClick);
+      }
     }
     return () => {
-      el.removeEventListener('keydown', handleKeyDown);
-      el.removeEventListener('click', handleManualButtonClick);
+      window.clearInterval(routePoll);
+      window.removeEventListener('popstate', checkRouteChanged);
+      if (el) {
+        el.removeEventListener('keydown', handleKeyDown);
+        el.removeEventListener('click', handleManualButtonClick);
+      }
     };
   }, [active, pausedForInput, decision, stepNumber, fetchNextStep]);
 

@@ -428,28 +428,28 @@ export const AvailableRouteHintSchema = z.object({
 export type AvailableRouteHint = z.infer<typeof AvailableRouteHintSchema>;
 
 export const PageMapElementSchema = z.object({
-  id: z.string().min(1).max(160),
+  id: z.string().min(1).max(200),
   tag: z.string().min(1).max(32),
   type: z.string().min(1).max(40),
-  label: z.string().max(120),
+  label: z.string().max(180),
   hasValue: z.boolean(),
-  currentRoute: z.string().max(300),
+  currentRoute: z.string().max(320),
   sensitive: z.boolean().optional(),
 });
 
 export type PageMapElement = z.infer<typeof PageMapElementSchema>;
 
 export const GuideStepRequestSchema = z.object({
-  goal: z.string().min(1).max(600),
-  previousStepSummary: z.string().max(400).default(''),
+  goal: z.string().min(1).max(800),
+  previousStepSummary: z.string().max(1600).default(''),
   stepNumber: z.number().int().min(1).max(20).default(1),
-  currentRoute: z.string().max(300).default('/'),
+  currentRoute: z.string().max(320).default('/'),
   pageMap: z.array(PageMapElementSchema).max(200),
   confirmedPath: z.boolean().optional(),
-  preferredTargetId: z.string().max(160).optional(),
-  preferredRoute: z.string().max(300).optional(),
+  preferredTargetId: z.string().max(200).optional(),
+  preferredRoute: z.string().max(320).optional(),
   availableRoutes: z.array(AvailableRouteHintSchema).max(60).optional(),
-  appContext: z.string().max(300).optional(),
+  appContext: z.string().max(600).optional(),
 });
 
 export type GuideStepRequest = z.infer<typeof GuideStepRequestSchema>;

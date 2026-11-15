@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
-import { ArrowRight, Check, Loader2, ShieldAlert, Square } from 'lucide-react';
+import { ArrowRight, Check, Loader2, ShieldAlert, Square, X } from 'lucide-react';
 import type { GuideStepResponse } from '@ai-assistant/core';
 
 export interface GuideCursorProps {
   active: boolean;
+  appName?: string;
   stepNumber: number;
   maxSteps: number;
   loading: boolean;
@@ -18,8 +19,25 @@ export interface GuideCursorProps {
   onStop: () => void;
 }
 
+interface BoxRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+function rectsOverlap(a: BoxRect, b: BoxRect, pad = 6): boolean {
+  return !(
+    a.right + pad <= b.left ||
+    a.left - pad >= b.right ||
+    a.bottom + pad <= b.top ||
+    a.top - pad >= b.bottom
+  );
+}
+
 export function GuideCursor({
   active,
+  appName = 'App',
   stepNumber,
   maxSteps,
   loading,
@@ -40,33 +58,99 @@ export function GuideCursor({
 
   if (!active) return null;
 
+  const displayAppName = appName.trim() || 'App';
   const isComplete = decision?.action === 'complete';
-  const showNextButton = (pausedForInput || isComplete) && !loading;
+  const showNextButton = (pausedForInput || isComplete) && !loading && !error;
 
-  // Compute clamped tooltip card position near the target element
   const cardWidth = Math.min(310, Math.max(240, viewport.w - 24));
-  const approxCardHeight = 148;
-  let cardLeft = cursorPos.x + 22;
-  let cardTop = cursorPos.y + 18;
+  const approxCardHeight = error ? 136 : 152;
+  const maxCardLeft = Math.max(12, viewport.w - cardWidth - 12);
+  const maxCardTop = Math.max(12, viewport.h - approxCardHeight - 82);
 
-  if (targetRect) {
-    if (targetRect.bottom + approxCardHeight + 24 < viewport.h) {
-      cardTop = targetRect.bottom + 14;
-      cardLeft = targetRect.left;
-    } else if (targetRect.top - approxCardHeight - 20 > 12) {
-      cardTop = targetRect.top - approxCardHeight - 14;
-      cardLeft = targetRect.left;
-    } else {
-      cardTop = Math.max(16, targetRect.top);
-      cardLeft = targetRect.right + 16;
+  // Bounding box for the SVG pointer arrow + its attached web-app-name pill
+  const pillEstimatedWidth = Math.min(185, Math.max(96, 56 + displayAppName.length * 7.5));
+  const cursorBox: BoxRect = {
+    left: cursorPos.x - 6,
+    top: cursorPos.y - 6,
+    right: cursorPos.x + pillEstimatedWidth,
+    bottom: cursorPos.y + 48,
+  };
+
+  // Top screen-sharing pill strip to avoid overlapping
+  const topPillBox: BoxRect = {
+    left: viewport.w / 2 - 170,
+    top: 0,
+    right: viewport.w / 2 + 170,
+    bottom: 58,
+  };
+
+  const clampCandidate = (rawLeft: number, rawTop: number): { left: number; top: number } => ({
+    left: Math.max(12, Math.min(maxCardLeft, Math.round(rawLeft))),
+    top: Math.max(12, Math.min(maxCardTop, Math.round(rawTop))),
+  });
+
+  const candidates: Array<{ left: number; top: number }> = [];
+
+  if (targetRect && !isComplete) {
+    const fitsLeft = targetRect.left - cardWidth - 22 >= 12;
+    const fitsRight = targetRect.right + cardWidth + 22 <= viewport.w - 12;
+
+    if (fitsLeft) {
+      candidates.push(clampCandidate(targetRect.left - cardWidth - 22, targetRect.top - 12));
     }
+    if (fitsRight) {
+      candidates.push(clampCandidate(targetRect.right + 22, targetRect.top - 12));
+    }
+    // Fallback below / above target (clear of cursorBox)
+    candidates.push(
+      clampCandidate(targetRect.left, Math.max(targetRect.bottom + 16, cursorBox.bottom + 14))
+    );
+    candidates.push(clampCandidate(targetRect.left, targetRect.bottom + 16));
+    candidates.push(clampCandidate(targetRect.left, targetRect.top - approxCardHeight - 16));
+    candidates.push(clampCandidate(targetRect.right + 20, targetRect.top));
+    candidates.push(clampCandidate(targetRect.left - cardWidth - 20, targetRect.top));
   } else {
-    cardLeft = Math.round((viewport.w - cardWidth) / 2);
-    cardTop = Math.round(viewport.h * 0.22);
+    // No target spotlight (e.g. completion, navigation, or error): place cleanly away from cursorBox
+    candidates.push(clampCandidate((viewport.w - cardWidth) / 2, cursorBox.bottom + 20));
+    candidates.push(
+      clampCandidate((viewport.w - cardWidth) / 2, cursorBox.top - approxCardHeight - 20)
+    );
+    candidates.push(clampCandidate(cursorBox.right + 20, cursorPos.y));
+    candidates.push(clampCandidate(cursorBox.left - cardWidth - 20, cursorPos.y));
+    candidates.push(clampCandidate((viewport.w - cardWidth) / 2, viewport.h * 0.24));
   }
 
-  cardLeft = Math.max(12, Math.min(viewport.w - cardWidth - 12, cardLeft));
-  cardTop = Math.max(12, Math.min(viewport.h - approxCardHeight - 76, cardTop));
+  let chosen = candidates[0]!;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const cand of candidates) {
+    const box: BoxRect = {
+      left: cand.left,
+      top: cand.top,
+      right: cand.left + cardWidth,
+      bottom: cand.top + approxCardHeight,
+    };
+    let penalty = 0;
+    if (rectsOverlap(box, cursorBox, 8)) penalty += 1000;
+    if (rectsOverlap(box, topPillBox, 6)) penalty += 250;
+    if (targetRect && !isComplete) {
+      const targetBox: BoxRect = {
+        left: targetRect.left,
+        top: targetRect.top,
+        right: targetRect.right,
+        bottom: targetRect.bottom,
+      };
+      if (rectsOverlap(box, targetBox, 8)) penalty += 400;
+    }
+    if (penalty < bestScore) {
+      bestScore = penalty;
+      chosen = cand;
+      if (penalty === 0) break;
+    }
+  }
+
+  const cardLeft = chosen.left;
+  const cardTop = chosen.top;
 
   const ringStyle: React.CSSProperties | undefined = targetRect
     ? {
@@ -100,7 +184,7 @@ export function GuideCursor({
         />
       )}
 
-      {/* Smooth-gliding SVG pointer */}
+      {/* Smooth-gliding SVG pointer + Web App Name Pill */}
       <div
         data-testid="guide-svg-pointer"
         className="aia-guide-cursor-pointer"
@@ -124,6 +208,14 @@ export function GuideCursor({
             strokeLinejoin="round"
           />
         </svg>
+        <span
+          data-testid="guide-agent-cursor-pill"
+          className={`aia-cursor-name-pill ${
+            sensitiveBlocked ? 'aia-cursor-name-pill-sensitive' : 'aia-cursor-name-pill-agent'
+          }`}
+        >
+          {displayAppName}
+        </span>
       </div>
 
       {/* Compact floating instruction tooltip */}
@@ -157,13 +249,24 @@ export function GuideCursor({
           )}
         </p>
 
-        {targetMissing && !loading && (
+        {targetMissing && !loading && !error && (
           <div className="aia-guide-cursor-hint">
             Target not visible here. Complete manually or press Next.
           </div>
         )}
 
         <div className="aia-guide-cursor-actions">
+          {error && !loading && (
+            <button
+              type="button"
+              data-ai-id="guide-error-close-btn"
+              data-testid="guide-error-close-btn"
+              className="aia-guide-cursor-next"
+              onClick={onStop}
+            >
+              <X size={13} /> Close
+            </button>
+          )}
           {(showNextButton || loading) && (
             <button
               type="button"
