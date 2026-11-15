@@ -160,6 +160,9 @@ export class VoiceController {
           };
 
           this.currentUtterance = utterance;
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
           window.speechSynthesis.speak(utterance);
           return;
         }

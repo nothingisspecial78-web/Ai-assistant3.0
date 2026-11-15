@@ -366,7 +366,7 @@ export function useGuideCoBrowser({
         if (historyStackRef.current.length > 20) {
           historyStackRef.current.shift();
         }
-        setCanGoBack(historyStackRef.current.length > 0);
+        setCanGoBack(historyStackRef.current.length > 0 || stepNum > 1);
       }
 
       const rawTip = rawDecision.tip || 'Follow this step.';
@@ -410,7 +410,7 @@ export function useGuideCoBrowser({
         troubleshootingContext: troubleshootingContextRef.current,
         detectedError: lastReportedErrorRef.current || null,
       };
-      setCanGoBack(historyStackRef.current.length > 0);
+      setCanGoBack(historyStackRef.current.length > 0 || stepNum > 1);
 
       // Speak instruction or question aloud immediately
       const spokenText =
@@ -1012,7 +1012,17 @@ export function useGuideCoBrowser({
     if (!active || loading) return;
     const prev = historyStackRef.current.pop();
     if (!prev) {
-      setCanGoBack(false);
+      if (stepNumber > 1) {
+        clearTimers();
+        const tok = sessionTokenRef.current + 1;
+        sessionTokenRef.current = tok;
+        const targetStep = stepNumber - 1;
+        setStepNumber(targetStep);
+        setCanGoBack(targetStep > 1);
+        void fetchNextStep(targetStep, tok);
+      } else {
+        setCanGoBack(false);
+      }
       return;
     }
 
@@ -1031,7 +1041,7 @@ export function useGuideCoBrowser({
     setError(null);
     setLoading(false);
     setSensitiveBlocked(Boolean(prev.decision.sensitiveBlocked));
-    setCanGoBack(historyStackRef.current.length > 0);
+    setCanGoBack(historyStackRef.current.length > 0 || prev.stepNumber > 1);
 
     const curRoute = typeof window !== 'undefined' ? window.location.pathname : '/';
     if (prev.route && prev.route !== curRoute) {
@@ -1054,7 +1064,7 @@ export function useGuideCoBrowser({
       },
       { recordHistory: false, forcePauseOnBack: true }
     );
-  }, [active, loading, clearTimers, applyStepDecision, fetchNextStep]);
+  }, [active, loading, clearTimers, applyStepDecision, fetchNextStep, stepNumber]);
 
   const submitUserReply = useCallback(
     async (rawReply: string) => {

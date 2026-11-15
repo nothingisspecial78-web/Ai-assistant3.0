@@ -100,4 +100,51 @@ describe('GuideCursor Dynamic Collision & Auto-Flip Layout', () => {
     assert.ok(res.cursorPos.x <= viewport.width - 120, `Expected clamped cursor X, got ${res.cursorPos.x}`);
     assert.ok(res.cursorPos.y <= viewport.height - 110, `Expected clamped cursor Y, got ${res.cursorPos.y}`);
   });
+
+  it('smoothly auto-flips between above and below during continuous scrolling', () => {
+    // Simulate target scrolling from bottom of page upwards into the viewport and then exiting near top
+    const scrollPositions = [
+      { top: 520, bottom: 566, expected: 'above' },
+      { top: 400, bottom: 446, expected: 'above' },
+      { top: 180, bottom: 226, expected: 'below' }, // insufficient vertical space above (< 170 + 16)
+      { top: 80, bottom: 126, expected: 'below' },  // scrolled high up: must be below
+    ];
+
+    for (const pos of scrollPositions) {
+      const target = {
+        left: 450,
+        top: pos.top,
+        right: 750,
+        bottom: pos.bottom,
+        width: 300,
+        height: 46,
+      };
+
+      const res = computeGuideCursorLayout({
+        targetRect: target,
+        cardSize,
+        viewport,
+        appName: 'Khazna',
+      });
+
+      assert.equal(
+        res.placement,
+        pos.expected,
+        `Expected placement ${pos.expected} for target top ${pos.top}, got ${res.placement}`
+      );
+      assert.equal(res.hadCollision, false, `Expected no collision at top ${pos.top}`);
+
+      const cardBox = {
+        left: res.cardLeft,
+        top: res.cardTop,
+        right: res.cardLeft + res.cardWidth,
+        bottom: res.cardTop + cardSize.height,
+      };
+      assert.equal(
+        rectsOverlap(cardBox, target, 4),
+        false,
+        `Card overlapped target at top ${pos.top}`
+      );
+    }
+  });
 });

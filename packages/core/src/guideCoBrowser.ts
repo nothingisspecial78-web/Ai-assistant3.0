@@ -1502,10 +1502,11 @@ export function buildDynamicDiagnosticQuestion(params: {
   }
 
   if (
-    /no student found|admission number|student id|not found|no sector manager|unregistered|not registered|account/i.test(
+    /no student found|admission number|student id|student\b|not found|no sector manager|unregistered|not registered|account|invalid id|incorrect id|invalid admission/i.test(
       errLower
     ) ||
-    (/\b(student|manager|login|sign\s*in)\b/i.test(goalLower) && /incorrect|invalid|wrong|failed|error/i.test(errLower))
+    (/\b(student|manager|login|sign\s*in)\b/i.test(goalLower) && /incorrect|invalid|wrong|failed|error/i.test(errLower)) ||
+    (currentRoute === '/login' && /student|admission|id|number/i.test(errLower))
   ) {
     return 'Are you registered by the admin?';
   }

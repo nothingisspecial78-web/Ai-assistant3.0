@@ -142,6 +142,20 @@ export function GuideCursor({
   const isComplete = decision?.action === 'complete';
   const isAskUser = decision?.action === 'ask_user';
   const isRefresh = decision?.action === 'refresh_and_retry';
+  const showCursorName =
+    loading || isSpeaking || (!pausedForInput && !isComplete && !isAskUser && !isRefresh);
+
+  // Auto-activate voice input when the assistant asks a question and speaking finishes
+  useEffect(() => {
+    if (isAskUser && !isSpeaking && !loading && recordingState === 'idle') {
+      const timer = window.setTimeout(() => {
+        if (!replyText.trim()) {
+          toggleVoiceInput();
+        }
+      }, 450);
+      return () => window.clearTimeout(timer);
+    }
+  }, [isAskUser, isSpeaking, loading, recordingState, replyText, toggleVoiceInput]);
 
   const layout = useMemo(
     () =>
@@ -236,14 +250,16 @@ export function GuideCursor({
             strokeLinejoin="round"
           />
         </svg>
-        <span
-          data-testid="guide-agent-cursor-pill"
-          className={`aia-cursor-name-pill ${
-            sensitiveBlocked ? 'aia-cursor-name-pill-sensitive' : 'aia-cursor-name-pill-agent'
-          }`}
-        >
-          {displayAppName}
-        </span>
+        {showCursorName && (
+          <span
+            data-testid="guide-agent-cursor-pill"
+            className={`aia-cursor-name-pill ${
+              sensitiveBlocked ? 'aia-cursor-name-pill-sensitive' : 'aia-cursor-name-pill-agent'
+            }`}
+          >
+            {displayAppName}
+          </span>
+        )}
       </div>
 
       {/* Compact floating instruction tooltip with dynamic collision detection */}
@@ -400,10 +416,10 @@ export function GuideCursor({
         )}
 
         <div className="aia-guide-cursor-actions">
-          {!error && onBack && (
+          {!error && onBack && (stepNumber > 1 || canGoBack) && (
             <button
               type="button"
-              disabled={!canGoBack || loading}
+              disabled={loading}
               data-ai-id="guide-back-btn"
               data-testid="guide-back-btn"
               className="aia-guide-cursor-back"

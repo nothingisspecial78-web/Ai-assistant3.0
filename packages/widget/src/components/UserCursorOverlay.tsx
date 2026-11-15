@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 export interface UserCursorOverlayProps {
   enabled?: boolean;
   label?: string;
+  showLabel?: boolean;
 }
 
 /**
@@ -13,6 +14,7 @@ export interface UserCursorOverlayProps {
 export function UserCursorOverlay({
   enabled = true,
   label = 'You',
+  showLabel = true,
 }: UserCursorOverlayProps) {
   const pointerRef = useRef<HTMLDivElement | null>(null);
   const posRef = useRef<{ x: number; y: number }>({ x: -100, y: -100 });
@@ -137,9 +139,11 @@ export function UserCursorOverlay({
             strokeLinejoin="round"
           />
         </svg>
-        <span className="aia-cursor-name-pill aia-cursor-name-pill-you" data-testid="user-cursor-pill">
-          {label}
-        </span>
+        {showLabel && (
+          <span className="aia-cursor-name-pill aia-cursor-name-pill-you" data-testid="user-cursor-pill">
+            {label}
+          </span>
+        )}
       </div>
     </div>
   );

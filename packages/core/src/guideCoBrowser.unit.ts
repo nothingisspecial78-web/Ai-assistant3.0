@@ -635,6 +635,23 @@ describe('Guide Co-Browser Pure Logic', () => {
     });
     assert.equal(dupErr?.action, 'ask_user');
     assert.ok(dupErr?.question?.toLowerCase().includes('existing record'));
+
+    // 6. Various student ID phrasing (e.g. "Incorrect student ID", "Invalid ID")
+    const incorrectIdErr = resolveGuideTroubleshootingStep({
+      goal: 'sign in as student',
+      currentRoute: '/login',
+      pageErrors: ['Incorrect student ID'],
+    });
+    assert.equal(incorrectIdErr?.action, 'ask_user');
+    assert.equal(incorrectIdErr?.question, 'Are you registered by the admin?');
+
+    const invalidIdErr = resolveGuideTroubleshootingStep({
+      goal: 'login student',
+      currentRoute: '/login',
+      pageErrors: ['Invalid admission number'],
+    });
+    assert.equal(invalidIdErr?.action, 'ask_user');
+    assert.equal(invalidIdErr?.question, 'Are you registered by the admin?');
   });
 });
 

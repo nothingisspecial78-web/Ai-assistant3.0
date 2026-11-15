@@ -632,7 +632,11 @@ export function AssistantWidget({
 
   return (
     <div className="aia-root" style={rootStyle}>
-      <UserCursorOverlay enabled={enabled && !inspecting && isAgentWorking} label="You" />
+      <UserCursorOverlay
+        enabled={enabled && !inspecting && isAgentWorking}
+        showLabel={isAgentWorking}
+        label="You"
+      />
 
       <ScreenShareGlow
         active={isScreenSharing}
