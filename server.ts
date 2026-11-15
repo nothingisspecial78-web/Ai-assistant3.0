@@ -18,6 +18,7 @@ async function startServer() {
     helmet({
       contentSecurityPolicy: false,
       crossOriginEmbedderPolicy: false,
+      hidePoweredBy: false,
     })
   );
   app.use(express.json({ limit: '10mb' }));
