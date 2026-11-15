@@ -92,7 +92,7 @@ export function mountAssistantRoutes(app: Express, runtime: AssistantRuntime): v
   const userLimiter = createUserRateLimiter(cfg);
   const authMiddleware = createAuthMiddleware(profiles, cfg);
 
-  app.get('/health', async (_req, res) => {
+  const handleHealth = async (_req: express.Request, res: express.Response) => {
     const profileSummaries = await Promise.all(
       profiles.listProfiles().map(async (p) => ({
         appId: p.appId,
@@ -109,7 +109,10 @@ export function mountAssistantRoutes(app: Express, runtime: AssistantRuntime): v
       profiles: profileSummaries,
       timestamp: new Date().toISOString(),
     });
-  });
+  };
+
+  app.get('/health', handleHealth);
+  app.get('/api/health', assistantCors, handleHealth);
 
   app.get('/api/assistant/debug/providers', assistantCors, (_req, res) => {
     res.json({

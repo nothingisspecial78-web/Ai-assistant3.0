@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { getOrCreateVercelApp } from '../api/index.ts';
+import handler, { getOrCreateVercelApp } from '../api/index.ts';
 import {
   registerLocalExpressApp,
   resolveAppBaseUrl,
@@ -45,8 +45,8 @@ describe('Vercel single-project full-stack deployment for Khazna', () => {
 
     expect(cfg.rewrites).toEqual(
       expect.arrayContaining([
-        { source: '/health', destination: '/api/index.ts' },
-        { source: '/api/(.*)', destination: '/api/index.ts' },
+        { source: '/health', destination: '/api/index.ts?__route=health' },
+        { source: '/api/(.*)', destination: '/api/index.ts?__route=$1' },
         { source: '/(.*)', destination: '/index.html' },
       ])
     );
@@ -94,5 +94,80 @@ describe('Vercel single-project full-stack deployment for Khazna', () => {
     expect(
       resolveAppBaseUrl('https://khazna.islahululoom.com/api', 3000, 'khazna-ledger', {})
     ).toBe('https://khazna.islahululoom.com/api');
+  });
+
+  it('4. handler cleanly routes Vercel requests with ?__route=... and returns CORS headers', async () => {
+    // Test OPTIONS preflight
+    let headers: Record<string, string> = {};
+    let statusCode = 200;
+    let ended = false;
+    let body = '';
+
+    const createMockRes = () => {
+      headers = {};
+      statusCode = 200;
+      ended = false;
+      body = '';
+      const callbacks: Record<string, () => void> = {};
+
+      const mockRes = {
+        setHeader(k: string, v: string) {
+          headers[k.toLowerCase()] = v;
+          return mockRes;
+        },
+        status(code: number) {
+          statusCode = code;
+          return mockRes;
+        },
+        json(data: unknown) {
+          body = JSON.stringify(data);
+          mockRes.end();
+          return mockRes;
+        },
+        end() {
+          ended = true;
+          callbacks['finish']?.();
+          callbacks['close']?.();
+          return mockRes;
+        },
+        on(event: string, cb: () => void) {
+          callbacks[event] = cb;
+          return mockRes;
+        },
+        headersSent: false,
+      };
+      return mockRes;
+    };
+
+    // 4a. OPTIONS request
+    const optionsReq = {
+      method: 'OPTIONS',
+      url: '/api/index.ts?__route=guide-step',
+      headers: { 'x-real-ip': '1.2.3.4' },
+    };
+    await handler(optionsReq as never, createMockRes() as never);
+    expect(statusCode).toBe(204);
+    expect(headers['access-control-allow-origin']).toBe('*');
+
+    // 4b. GET /health with ?__route=health
+    const healthReq = {
+      method: 'GET',
+      url: '/api/index.ts?__route=health',
+      headers: { 'x-real-ip': '1.2.3.4' },
+    };
+    await handler(healthReq as never, createMockRes() as never);
+    expect(statusCode).toBe(200);
+    expect(body).toContain('"status":"ok"');
+    expect(headers['access-control-allow-origin']).toBe('*');
+
+    // 4c. GET /api/profiles with ?__route=profiles
+    const profilesReq = {
+      method: 'GET',
+      url: '/api/index.ts?__route=profiles',
+      headers: { 'x-real-ip': '1.2.3.4' },
+    };
+    await handler(profilesReq as never, createMockRes() as never);
+    expect(statusCode).toBe(200);
+    expect(body).toContain('khazna-ledger');
   });
 });

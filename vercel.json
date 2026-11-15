@@ -23,11 +23,11 @@
   "rewrites": [
     {
       "source": "/health",
-      "destination": "/api/index.ts"
+      "destination": "/api/index.ts?__route=health"
     },
     {
       "source": "/api/(.*)",
-      "destination": "/api/index.ts"
+      "destination": "/api/index.ts?__route=$1"
     },
     {
       "source": "/(.*)",

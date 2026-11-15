@@ -75,16 +75,50 @@ export default async function handler(req: Request, res: Response) {
     };
   }
 
-  // If Vercel rewrote the request to /api/index.ts, reconstruct original route from Vercel headers
-  const matchedPath =
-    (req.headers['x-matched-path'] as string) ||
-    (req.headers['x-forwarded-uri'] as string) ||
-    (req.headers['x-original-url'] as string);
+  // Top-level CORS headers for all Vercel responses
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, x-app-id, x-requested-with, accept, origin'
+  );
 
-  if (matchedPath && (req.url === '/api/index.ts' || req.url.startsWith('/api/index.ts?'))) {
-    const urlObj = new URL(req.url, 'http://localhost');
-    const matchedObj = new URL(matchedPath, 'http://localhost');
-    req.url = matchedObj.pathname + (urlObj.search || matchedObj.search || '');
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+
+  // Parse incoming URL and reconstruct original route if rewritten by Vercel
+  const rawUrl = req.url || '/';
+  const urlObj = new URL(rawUrl, 'http://localhost');
+  const routeParam = urlObj.searchParams.get('__route');
+
+  if (routeParam) {
+    // 1. Explicit Vercel rewrite parameter (?__route=...)
+    urlObj.searchParams.delete('__route');
+    const cleanRoute = routeParam.startsWith('/') ? routeParam : `/${routeParam}`;
+    const prefix = cleanRoute === '/health' || cleanRoute.startsWith('/api') ? '' : '/api';
+    const qs = urlObj.searchParams.toString();
+    req.url = `${prefix}${cleanRoute}${qs ? `?${qs}` : ''}`;
+  } else {
+    // 2. Fallback to original URL headers (ignoring destination handler filenames)
+    const isHandlerPath = (p?: string) =>
+      !p ||
+      /^\/api\/index(?:\.ts|\.js)?(?:\/|\?|$)/i.test(p) ||
+      p === '/api' ||
+      p === '/api/' ||
+      p === '/';
+
+    const candidate =
+      (req.headers['x-forwarded-uri'] as string) ||
+      (req.headers['x-original-url'] as string) ||
+      (req.headers['x-now-route-matches'] as string) ||
+      (req.headers['x-matched-path'] as string);
+
+    if (isHandlerPath(req.url) && candidate && !isHandlerPath(candidate)) {
+      const candObj = new URL(candidate, 'http://localhost');
+      req.url = candObj.pathname + (urlObj.search || candObj.search || '');
+    }
   }
 
   try {
@@ -94,8 +128,18 @@ export default async function handler(req: Request, res: Response) {
       res.on('close', () => resolve());
       res.on('error', (err) => reject(err));
       app(req, res, (err?: unknown) => {
-        if (err) reject(err);
-        else resolve();
+        if (err) {
+          reject(err);
+        } else if (!res.headersSent) {
+          res.status(404).json({
+            error: 'Not Found',
+            url: req.url,
+            originalUrl: rawUrl,
+          });
+          resolve();
+        } else {
+          resolve();
+        }
       });
     });
   } catch (err: unknown) {
