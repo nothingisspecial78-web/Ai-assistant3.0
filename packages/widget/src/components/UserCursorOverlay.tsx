@@ -44,7 +44,11 @@ export function UserCursorOverlay({
       )}px, 0)`;
     };
 
-    const updateCoords = (x: number, y: number) => {
+    const updateCoords = (rawX: number, rawY: number) => {
+      const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+      const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+      const x = Math.max(4, Math.min(Math.max(4, vw - 76), rawX));
+      const y = Math.max(4, Math.min(Math.max(4, vh - 44), rawY));
       posRef.current = { x, y };
       setVisible((prev) => (prev ? prev : true));
       if (!rafRef.current) {

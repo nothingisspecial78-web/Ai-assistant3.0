@@ -8,6 +8,7 @@ import {
   detectAmbiguousGuidePaths,
   estimateApproxTokens,
   matchClarificationReply,
+  resolveGuideTroubleshootingStep,
   sanitizeGuideStepDecision,
   shouldTriggerGuideMode,
   truncateTipWords,
@@ -441,5 +442,200 @@ describe('Guide Co-Browser Pure Logic', () => {
     });
     assert.equal(managerOverviewStep.action, 'complete');
   });
+
+  it('guides "open the domo model" (demo typo) across /login clarification, button click, and completion, plus logout guidance', () => {
+    assert.equal(shouldTriggerGuideMode('open the domo model'), true);
+    assert.equal(shouldTriggerGuideMode('open demo mode'), true);
+
+    const loginWithDemoMap: PageMapElement[] = [
+      { id: 'login-role-admin', tag: 'button', type: 'button', label: 'Admin', hasValue: false, currentRoute: '/login' },
+      { id: 'login-role-manager', tag: 'button', type: 'button', label: 'Sector Manager', hasValue: false, currentRoute: '/login' },
+      { id: 'login-role-student', tag: 'button', type: 'button', label: 'Student', hasValue: false, currentRoute: '/login' },
+      { id: 'login-demo-admin-btn', tag: 'button', type: 'button', label: 'Admin Full college overview', hasValue: false, currentRoute: '/login' },
+      { id: 'login-demo-manager-btn', tag: 'button', type: 'button', label: 'Sector Manager Dept Fiqh ledger', hasValue: false, currentRoute: '/login' },
+      { id: 'login-demo-student-btn', tag: 'button', type: 'button', label: 'Student Safwan K.', hasValue: false, currentRoute: '/login' },
+    ];
+
+    // Step 1 on /login clarifies the 3 demo roles
+    const clarifyDemo = detectAmbiguousGuidePaths({
+      goal: 'open the domo model',
+      pageMap: loginWithDemoMap,
+      currentRoute: '/login',
+      availableRoutes: [{ route: '/login', label: 'Portal Login' }],
+    });
+    assert.ok(clarifyDemo && clarifyDemo.action === 'clarify');
+    assert.equal(clarifyDemo.options?.length, 3);
+    assert.deepEqual(
+      clarifyDemo.options?.map((o) => o.targetId),
+      ['login-demo-admin-btn', 'login-demo-manager-btn', 'login-demo-student-btn']
+    );
+
+    // Selecting Sector Manager clicks login-demo-manager-btn
+    const pickManagerStep = buildDeterministicGuideStep({
+      goal: 'open the domo model using "Sector Manager"',
+      previousStepSummary: '',
+      pageMap: loginWithDemoMap,
+      stepNumber: 1,
+      currentRoute: '/login',
+      confirmedPath: true,
+      preferredTargetId: 'login-demo-manager-btn',
+    });
+    assert.equal(pickManagerStep.action, 'click_safe');
+    assert.equal(pickManagerStep.targetId, 'login-demo-manager-btn');
+
+    // Step 2 on dashboard completes immediately
+    const demoDoneStep = buildDeterministicGuideStep({
+      goal: 'open the domo model using "Sector Manager"',
+      previousStepSummary: 'Clicked login-demo-manager-btn (Sector Manager)',
+      pageMap: [
+        { id: 'nav-ledger-link', tag: 'a', type: 'link', label: 'Ledger', hasValue: false, currentRoute: '/m/dept-fiqh' },
+      ],
+      stepNumber: 2,
+      currentRoute: '/m/dept-fiqh',
+      confirmedPath: true,
+    });
+    assert.equal(demoDoneStep.action, 'complete');
+
+    // Asking to open demo from dashboard navigates to /login first
+    const navToLoginStep = buildDeterministicGuideStep({
+      goal: 'open the domo model',
+      previousStepSummary: '',
+      pageMap: [
+        { id: 'nav-ledger-link', tag: 'a', type: 'link', label: 'Ledger', hasValue: false, currentRoute: '/m/dept-fiqh' },
+      ],
+      stepNumber: 1,
+      currentRoute: '/m/dept-fiqh',
+    });
+    assert.equal(navToLoginStep.action, 'navigate');
+    assert.equal(navToLoginStep.route, '/login');
+
+    // Logout guide opens user menu then points to sign out
+    const openMenuStep = buildDeterministicGuideStep({
+      goal: 'how do i log out?',
+      previousStepSummary: '',
+      pageMap: [
+        { id: 'user-menu-btn', tag: 'button', type: 'button', label: 'Profile', hasValue: false, currentRoute: '/m/dept-fiqh' },
+      ],
+      stepNumber: 1,
+      currentRoute: '/m/dept-fiqh',
+    });
+    assert.equal(openMenuStep.action, 'click_safe');
+    assert.equal(openMenuStep.targetId, 'user-menu-btn');
+
+    const pointSignOutStep = buildDeterministicGuideStep({
+      goal: 'how do i log out?',
+      previousStepSummary: 'Clicked user-menu-btn',
+      pageMap: [
+        { id: 'user-menu-signout-btn', tag: 'button', type: 'button', label: 'Sign out', hasValue: false, currentRoute: '/m/dept-fiqh', sensitive: true },
+      ],
+      stepNumber: 2,
+      currentRoute: '/m/dept-fiqh',
+    });
+    assert.equal(pointSignOutStep.action, 'point_and_wait');
+    assert.equal(pointSignOutStep.targetId, 'user-menu-signout-btn');
+  });
+
+  it('triggers guide for direct login prompts and dynamically diagnoses page errors with Yes/No/Follow-up recovery', () => {
+    assert.equal(shouldTriggerGuideMode('log in as student'), true);
+    assert.equal(shouldTriggerGuideMode('sign in as admin'), true);
+
+    // 1. Visible student ID error -> contextual diagnostic question + Yes/No chips
+    const diag = resolveGuideTroubleshootingStep({
+      goal: 'log in as student',
+      currentRoute: '/login',
+      pageErrors: ['No student found with that admission number.'],
+    });
+    assert.ok(diag);
+    assert.equal(diag.action, 'ask_user');
+    assert.equal(diag.askStage, 'diagnostic');
+    assert.equal(diag.question, 'Are you registered by the admin?');
+    assert.deepEqual(
+      diag.quickReplies?.map((q) => q.value),
+      ['yes', 'no']
+    );
+
+    // 2. Affirmative ("yes") -> refresh_and_retry
+    const yesRes = resolveGuideTroubleshootingStep({
+      goal: 'log in as student',
+      currentRoute: '/login',
+      userReply: 'Yes',
+      troubleshootingContext: {
+        errorText: 'No student found with that admission number.',
+        questionAsked: diag.question!,
+        stage: 'diagnostic',
+      },
+    });
+    assert.ok(yesRes);
+    assert.equal(yesRes.action, 'refresh_and_retry');
+    assert.equal(yesRes.refreshApp, true);
+
+    // 3. Negative ("no") -> advise contact admin + ask if user wants another guide
+    const noRes = resolveGuideTroubleshootingStep({
+      goal: 'log in as student',
+      currentRoute: '/login',
+      userReply: 'no',
+      troubleshootingContext: {
+        errorText: 'No student found with that admission number.',
+        questionAsked: diag.question!,
+        stage: 'diagnostic',
+      },
+    });
+    assert.ok(noRes);
+    assert.equal(noRes.action, 'ask_user');
+    assert.equal(noRes.askStage, 'follow_up_guide');
+    assert.ok(noRes.question?.toLowerCase().includes('contact the admin'));
+    assert.ok(noRes.question?.toLowerCase().includes('any other guide'));
+    assert.deepEqual(
+      noRes.quickReplies?.map((q) => q.value),
+      ['close']
+    );
+
+    // 4. Saying "yes" to follow-up asks what they want; saying "open demo mode" hands off cleanly; saying "close" closes
+    const followUpYes = resolveGuideTroubleshootingStep({
+      goal: 'log in as student',
+      currentRoute: '/login',
+      userReply: 'yes',
+      troubleshootingContext: {
+        errorText: 'No student found with that admission number.',
+        questionAsked: noRes.question!,
+        stage: 'follow_up_guide',
+      },
+    });
+    assert.equal(followUpYes?.action, 'ask_user');
+
+    const followUpNewTopic = resolveGuideTroubleshootingStep({
+      goal: 'log in as student',
+      currentRoute: '/login',
+      userReply: 'open demo mode',
+      troubleshootingContext: {
+        errorText: 'No student found with that admission number.',
+        questionAsked: noRes.question!,
+        stage: 'follow_up_guide',
+      },
+    });
+    assert.equal(followUpNewTopic, null);
+
+    const followUpClose = resolveGuideTroubleshootingStep({
+      goal: 'log in as student',
+      currentRoute: '/login',
+      userReply: 'close',
+      troubleshootingContext: {
+        errorText: 'No student found with that admission number.',
+        questionAsked: noRes.question!,
+        stage: 'follow_up_guide',
+      },
+    });
+    assert.equal(followUpClose?.action, 'complete');
+
+    // 5. Dynamic non-login errors generate relevant contextual questions
+    const dupErr = resolveGuideTroubleshootingStep({
+      goal: 'add student',
+      currentRoute: '/admin/students',
+      pageErrors: ['Student admission number already exists.'],
+    });
+    assert.equal(dupErr?.action, 'ask_user');
+    assert.ok(dupErr?.question?.toLowerCase().includes('existing record'));
+  });
 });
+
 

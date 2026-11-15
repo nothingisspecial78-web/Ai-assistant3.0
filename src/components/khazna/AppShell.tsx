@@ -478,6 +478,7 @@ export function AppShell({ role, sectorSlug, children }: { role: Role; sectorSlu
                 <Link
                   to="/login"
                   data-ai-id="header-signout-link"
+                  data-guide-id="header-signout-link"
                   data-sensitive="true"
                   aria-label="Sign out"
                   title="Sign out"
@@ -489,7 +490,11 @@ export function AppShell({ role, sectorSlug, children }: { role: Role; sectorSlu
             ) : (
               <KMenu
                 trigger={
-                  <button data-ai-id="user-menu-btn" className="flex items-center gap-2 rounded-xl p-1 pr-2 hover:bg-accent">
+                  <button
+                    data-ai-id="user-menu-btn"
+                    data-guide-id="user-menu-btn"
+                    className="flex items-center gap-2 rounded-xl p-1 pr-2 hover:bg-accent"
+                  >
                     <Avatar name={user.name} size={32} />
                     <span className="hidden text-left leading-tight md:block">
                       <span className="block text-sm font-medium text-foreground">{user.name}</span>
@@ -498,7 +503,7 @@ export function AppShell({ role, sectorSlug, children }: { role: Role; sectorSlu
                   </button>
                 }
               >
-                <KMenuItem data-ai-id="user-menu-signout-btn" data-sensitive="true" destructive onSelect={() => navigate({ to: "/login" })}>
+                <KMenuItem data-ai-id="user-menu-signout-btn" data-guide-id="user-menu-signout-btn" data-sensitive="true" destructive onSelect={() => navigate({ to: "/login" })}>
                   <LogOut className="size-4" /> Sign out
                 </KMenuItem>
               </KMenu>

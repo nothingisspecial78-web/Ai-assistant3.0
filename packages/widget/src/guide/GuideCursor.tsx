@@ -1,10 +1,29 @@
-import React, { useMemo } from 'react';
-import { ArrowRight, Check, Loader2, ShieldAlert, Square, X } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Loader2,
+  Mic,
+  MicOff,
+  Send,
+  ShieldAlert,
+  Square,
+  Volume2,
+  VolumeX,
+  X,
+} from 'lucide-react';
 import type { GuideStepResponse } from '@ai-assistant/core';
+import { useVoiceInput } from '../hooks/useVoiceInput.ts';
+import { computeGuideCursorLayout } from './guidePositioning.ts';
 
 export interface GuideCursorProps {
   active: boolean;
   appName?: string;
+  apiUrl?: string;
+  appId?: string;
+  language?: 'auto' | 'en' | 'ml' | string;
+  getAuthToken?: () => string | Promise<string>;
   stepNumber: number;
   maxSteps: number;
   loading: boolean;
@@ -15,29 +34,24 @@ export interface GuideCursorProps {
   cursorPos: { x: number; y: number };
   targetMissing: boolean;
   error: string | null;
+  detectedError?: string | null;
+  canGoBack?: boolean;
+  muted?: boolean;
+  isSpeaking?: boolean;
+  onBack?: () => void;
   onNext: () => void;
+  onReply?: (reply: string) => void;
+  onToggleMute?: () => void;
   onStop: () => void;
-}
-
-interface BoxRect {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
-
-function rectsOverlap(a: BoxRect, b: BoxRect, pad = 6): boolean {
-  return !(
-    a.right + pad <= b.left ||
-    a.left - pad >= b.right ||
-    a.bottom + pad <= b.top ||
-    a.top - pad >= b.bottom
-  );
 }
 
 export function GuideCursor({
   active,
   appName = 'App',
+  apiUrl = '',
+  appId = 'khazna-ledger',
+  language = 'en',
+  getAuthToken,
   stepNumber,
   maxSteps,
   loading,
@@ -48,122 +62,134 @@ export function GuideCursor({
   cursorPos,
   targetMissing,
   error,
+  detectedError,
+  canGoBack = false,
+  muted = false,
+  isSpeaking = false,
+  onBack,
   onNext,
+  onReply,
+  onToggleMute,
   onStop,
 }: GuideCursorProps) {
-  const viewport = useMemo(() => {
-    if (typeof window === 'undefined') return { w: 1280, h: 800 };
-    return { w: window.innerWidth, h: window.innerHeight };
-  }, [targetRect, cursorPos, active]);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [cardSize, setCardSize] = useState<{ width: number; height: number }>({
+    width: 320,
+    height: 175,
+  });
+  const [viewport, setViewport] = useState<{ width: number; height: number }>(() =>
+    typeof window !== 'undefined'
+      ? { width: window.innerWidth, height: window.innerHeight }
+      : { width: 1280, height: 800 }
+  );
+  const [replyText, setReplyText] = useState('');
 
-  if (!active) return null;
+  const { recordingState, micError, clearMicError, toggleVoiceInput } = useVoiceInput({
+    apiUrl,
+    appId,
+    language,
+    getAuthToken,
+    onTranscript: (transcript) => {
+      const clean = transcript.trim();
+      if (!clean) return;
+      if (onReply) {
+        onReply(clean);
+      } else {
+        setReplyText(clean);
+      }
+    },
+  });
+
+  useEffect(() => {
+    setReplyText('');
+    clearMicError();
+  }, [decision?.question, decision?.askStage, stepNumber, clearMicError]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => {
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = cardRef.current;
+    if (!el || !active) return;
+
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        setCardSize((prev) =>
+          Math.abs(prev.width - r.width) > 2 || Math.abs(prev.height - r.height) > 2
+            ? { width: Math.round(r.width), height: Math.round(r.height) }
+            : prev
+        );
+      }
+    };
+
+    measure();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(measure);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+  }, [active, decision, loading, error, targetMissing, recordingState, micError]);
 
   const displayAppName = appName.trim() || 'App';
   const isComplete = decision?.action === 'complete';
-  const showNextButton = (pausedForInput || isComplete) && !loading && !error;
+  const isAskUser = decision?.action === 'ask_user';
+  const isRefresh = decision?.action === 'refresh_and_retry';
 
-  const cardWidth = Math.min(310, Math.max(240, viewport.w - 24));
-  const approxCardHeight = error ? 136 : 152;
-  const maxCardLeft = Math.max(12, viewport.w - cardWidth - 12);
-  const maxCardTop = Math.max(12, viewport.h - approxCardHeight - 82);
+  const layout = useMemo(
+    () =>
+      computeGuideCursorLayout({
+        targetRect: targetRect
+          ? {
+              left: targetRect.left,
+              top: targetRect.top,
+              right: targetRect.right,
+              bottom: targetRect.bottom,
+              width: targetRect.width,
+              height: targetRect.height,
+            }
+          : null,
+        cardSize,
+        viewport,
+        appName: displayAppName,
+        isComplete: isComplete || isAskUser || isRefresh,
+        preferredAnchorCursor: targetRect ? undefined : cursorPos,
+      }),
+    [targetRect, cardSize, viewport, displayAppName, isComplete, isAskUser, isRefresh, cursorPos]
+  );
 
-  // Bounding box for the SVG pointer arrow + its attached web-app-name pill
-  const pillEstimatedWidth = Math.min(185, Math.max(96, 56 + displayAppName.length * 7.5));
-  const cursorBox: BoxRect = {
-    left: cursorPos.x - 6,
-    top: cursorPos.y - 6,
-    right: cursorPos.x + pillEstimatedWidth,
-    bottom: cursorPos.y + 48,
-  };
+  if (!active) return null;
 
-  // Top screen-sharing pill strip to avoid overlapping
-  const topPillBox: BoxRect = {
-    left: viewport.w / 2 - 170,
-    top: 0,
-    right: viewport.w / 2 + 170,
-    bottom: 58,
-  };
+  const showNextButton =
+    !isAskUser && !isRefresh && (pausedForInput || isComplete) && !loading && !error;
 
-  const clampCandidate = (rawLeft: number, rawTop: number): { left: number; top: number } => ({
-    left: Math.max(12, Math.min(maxCardLeft, Math.round(rawLeft))),
-    top: Math.max(12, Math.min(maxCardTop, Math.round(rawTop))),
-  });
-
-  const candidates: Array<{ left: number; top: number }> = [];
-
-  if (targetRect && !isComplete) {
-    const fitsLeft = targetRect.left - cardWidth - 22 >= 12;
-    const fitsRight = targetRect.right + cardWidth + 22 <= viewport.w - 12;
-
-    if (fitsLeft) {
-      candidates.push(clampCandidate(targetRect.left - cardWidth - 22, targetRect.top - 12));
-    }
-    if (fitsRight) {
-      candidates.push(clampCandidate(targetRect.right + 22, targetRect.top - 12));
-    }
-    // Fallback below / above target (clear of cursorBox)
-    candidates.push(
-      clampCandidate(targetRect.left, Math.max(targetRect.bottom + 16, cursorBox.bottom + 14))
-    );
-    candidates.push(clampCandidate(targetRect.left, targetRect.bottom + 16));
-    candidates.push(clampCandidate(targetRect.left, targetRect.top - approxCardHeight - 16));
-    candidates.push(clampCandidate(targetRect.right + 20, targetRect.top));
-    candidates.push(clampCandidate(targetRect.left - cardWidth - 20, targetRect.top));
-  } else {
-    // No target spotlight (e.g. completion, navigation, or error): place cleanly away from cursorBox
-    candidates.push(clampCandidate((viewport.w - cardWidth) / 2, cursorBox.bottom + 20));
-    candidates.push(
-      clampCandidate((viewport.w - cardWidth) / 2, cursorBox.top - approxCardHeight - 20)
-    );
-    candidates.push(clampCandidate(cursorBox.right + 20, cursorPos.y));
-    candidates.push(clampCandidate(cursorBox.left - cardWidth - 20, cursorPos.y));
-    candidates.push(clampCandidate((viewport.w - cardWidth) / 2, viewport.h * 0.24));
-  }
-
-  let chosen = candidates[0]!;
-  let bestScore = Number.POSITIVE_INFINITY;
-
-  for (const cand of candidates) {
-    const box: BoxRect = {
-      left: cand.left,
-      top: cand.top,
-      right: cand.left + cardWidth,
-      bottom: cand.top + approxCardHeight,
-    };
-    let penalty = 0;
-    if (rectsOverlap(box, cursorBox, 8)) penalty += 1000;
-    if (rectsOverlap(box, topPillBox, 6)) penalty += 250;
-    if (targetRect && !isComplete) {
-      const targetBox: BoxRect = {
-        left: targetRect.left,
-        top: targetRect.top,
-        right: targetRect.right,
-        bottom: targetRect.bottom,
-      };
-      if (rectsOverlap(box, targetBox, 8)) penalty += 400;
-    }
-    if (penalty < bestScore) {
-      bestScore = penalty;
-      chosen = cand;
-      if (penalty === 0) break;
-    }
-  }
-
-  const cardLeft = chosen.left;
-  const cardTop = chosen.top;
-
-  const ringStyle: React.CSSProperties | undefined = targetRect
-    ? {
-        left: `${Math.max(2, targetRect.left - 5)}px`,
-        top: `${Math.max(2, targetRect.top - 5)}px`,
-        width: `${Math.max(16, targetRect.width + 10)}px`,
-        height: `${Math.max(16, targetRect.height + 10)}px`,
-      }
-    : undefined;
+  const ringStyle: React.CSSProperties | undefined =
+    targetRect && !isAskUser && !isRefresh
+      ? {
+          left: `${Math.max(2, targetRect.left - 5)}px`,
+          top: `${Math.max(2, targetRect.top - 5)}px`,
+          width: `${Math.max(16, targetRect.width + 10)}px`,
+          height: `${Math.max(16, targetRect.height + 10)}px`,
+        }
+      : undefined;
 
   const markOverlayEvent = (e: React.SyntheticEvent) => {
     const ne = e.nativeEvent as Event & { __aiaOverlayClick?: boolean };
     ne.__aiaOverlayClick = true;
+  };
+
+  const submitTextReply = () => {
+    const clean = replyText.trim();
+    if (!clean || !onReply || loading) return;
+    setReplyText('');
+    onReply(clean);
   };
 
   return (
@@ -189,7 +215,9 @@ export function GuideCursor({
         data-testid="guide-svg-pointer"
         className="aia-guide-cursor-pointer"
         style={{
-          transform: `translate3d(${Math.round(cursorPos.x)}px, ${Math.round(cursorPos.y)}px, 0)`,
+          transform: `translate3d(${Math.round(layout.cursorPos.x)}px, ${Math.round(
+            layout.cursorPos.y
+          )}px, 0)`,
         }}
       >
         <svg
@@ -218,24 +246,52 @@ export function GuideCursor({
         </span>
       </div>
 
-      {/* Compact floating instruction tooltip */}
+      {/* Compact floating instruction tooltip with dynamic collision detection */}
       <div
+        ref={cardRef}
         data-testid="guide-tooltip-card"
+        data-placement={layout.placement}
         className="aia-guide-cursor-card"
         onPointerDown={markOverlayEvent}
         onMouseDown={markOverlayEvent}
-        style={{ left: `${cardLeft}px`, top: `${cardTop}px`, width: `${cardWidth}px` }}
+        style={{
+          left: `${layout.cardLeft}px`,
+          top: `${layout.cardTop}px`,
+          width: `${layout.cardWidth}px`,
+        }}
       >
         <div className="aia-guide-cursor-card-head">
           <span className="aia-guide-cursor-step" style={{ fontVariantNumeric: 'tabular-nums' }}>
             Step {Math.min(stepNumber, maxSteps)} / {maxSteps}
           </span>
-          {sensitiveBlocked && (
-            <span className="aia-guide-cursor-sensitive-badge">
-              <ShieldAlert size={12} /> Manual Click Only
-            </span>
-          )}
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {sensitiveBlocked && (
+              <span className="aia-guide-cursor-sensitive-badge">
+                <ShieldAlert size={12} /> Manual Click Only
+              </span>
+            )}
+            {onToggleMute && (
+              <button
+                type="button"
+                data-testid="guide-voice-toggle-btn"
+                data-ai-id="guide-voice-toggle-btn"
+                aria-label={muted ? 'Unmute guide voice' : 'Mute guide voice'}
+                aria-pressed={muted}
+                title={muted ? 'Unmute agent voice' : isSpeaking ? 'Speaking… (click to mute)' : 'Mute agent voice'}
+                className={`aia-guide-cursor-icon-btn ${isSpeaking && !muted ? 'is-speaking' : ''}`}
+                onClick={onToggleMute}
+              >
+                {muted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+              </button>
+            )}
+          </div>
         </div>
+
+        {isAskUser && detectedError && decision?.askStage === 'diagnostic' && (
+          <div className="aia-guide-cursor-error-note" data-testid="guide-detected-error-note">
+            Detected issue: {detectedError}
+          </div>
+        )}
 
         <p className="aia-guide-cursor-tip" data-testid="guide-tip-text">
           {loading ? (
@@ -244,18 +300,118 @@ export function GuideCursor({
             </span>
           ) : error ? (
             error
+          ) : isAskUser ? (
+            decision?.question || decision?.tip || 'Please respond to continue.'
           ) : (
             decision?.tip || 'Follow the highlighted control.'
           )}
         </p>
 
-        {targetMissing && !loading && !error && (
+        {isAskUser && !loading && !error && (
+          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {decision?.quickReplies && decision.quickReplies.length > 0 && (
+              <div className="aia-guide-cursor-replies" data-testid="guide-quick-replies">
+                {decision.quickReplies.map((qr) => (
+                  <button
+                    key={qr.id}
+                    type="button"
+                    data-testid={`guide-quick-reply-${qr.id}`}
+                    data-ai-id={`guide-quick-reply-${qr.id}`}
+                    className={`aia-guide-cursor-reply-btn ${
+                      qr.variant === 'primary'
+                        ? 'is-primary'
+                        : qr.variant === 'danger'
+                          ? 'is-danger'
+                          : ''
+                    }`}
+                    onClick={() => onReply?.(qr.value)}
+                  >
+                    {qr.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="aia-guide-cursor-reply-input-row">
+              <input
+                type="text"
+                data-testid="guide-reply-input"
+                data-ai-id="guide-reply-input"
+                aria-label="Reply to assistant question"
+                placeholder={
+                  decision?.askStage === 'follow_up_guide'
+                    ? 'Ask another guide or type close…'
+                    : 'Type or speak Yes / No…'
+                }
+                className="aia-guide-cursor-reply-input"
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submitTextReply();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                data-testid="guide-voice-input-btn"
+                data-ai-id="guide-voice-input-btn"
+                aria-label={recordingState === 'listening' ? 'Stop voice answer' : 'Speak answer'}
+                aria-pressed={recordingState !== 'idle'}
+                title="Speak your answer"
+                className={`aia-guide-cursor-mic-btn ${
+                  recordingState === 'listening' ? 'is-listening' : ''
+                }`}
+                onClick={toggleVoiceInput}
+              >
+                {recordingState === 'listening' ? <MicOff size={13} /> : <Mic size={13} />}
+              </button>
+              <button
+                type="button"
+                data-testid="guide-reply-send-btn"
+                data-ai-id="guide-reply-send-btn"
+                aria-label="Send reply"
+                disabled={!replyText.trim()}
+                className="aia-guide-cursor-mic-btn is-send"
+                onClick={submitTextReply}
+              >
+                <Send size={13} />
+              </button>
+            </div>
+
+            {recordingState !== 'idle' && (
+              <div style={{ fontSize: '11px', color: '#93c5fd', fontWeight: 600 }} role="status">
+                {recordingState === 'listening' ? 'Listening… speak now' : 'Transcribing voice…'}
+              </div>
+            )}
+            {micError && (
+              <div style={{ fontSize: '11px', color: '#fda4af' }} role="status">
+                {micError}
+              </div>
+            )}
+          </div>
+        )}
+
+        {targetMissing && !isAskUser && !loading && !error && (
           <div className="aia-guide-cursor-hint">
             Target not visible here. Complete manually or press Next.
           </div>
         )}
 
         <div className="aia-guide-cursor-actions">
+          {!error && onBack && (
+            <button
+              type="button"
+              disabled={!canGoBack || loading}
+              data-ai-id="guide-back-btn"
+              data-testid="guide-back-btn"
+              className="aia-guide-cursor-back"
+              onClick={onBack}
+            >
+              <ArrowLeft size={13} /> Back
+            </button>
+          )}
           {error && !loading && (
             <button
               type="button"

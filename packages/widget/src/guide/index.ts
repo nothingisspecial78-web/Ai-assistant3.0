@@ -5,4 +5,5 @@ export * from './GuideOverlay.tsx';
 export * from './GuideEngine.ts';
 export * from './pageMap.ts';
 export * from './GuideCursor.tsx';
+export * from './guidePositioning.ts';
 

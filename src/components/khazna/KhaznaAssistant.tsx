@@ -388,10 +388,25 @@ export function KhaznaAssistant() {
         }
 
         case 'NAVIGATE': {
+          const route = typeof payload.route === 'string' && payload.route ? payload.route : '/admin';
+          if (route === '/login' || payload.signOut === true) {
+            if (typeof window !== 'undefined') {
+              try {
+                window.sessionStorage.removeItem('khazna_super_admin_token');
+                window.sessionStorage.removeItem('khazna_super_admin_user');
+              } catch {
+                // ignore storage restrictions
+              }
+            }
+            void router.navigate({ to: '/login' });
+            if (pathname !== '/login') {
+              toast.success('Signed out');
+            }
+            break;
+          }
           if (payload.loadDemo === true) {
             st.loadDemo();
           }
-          const route = typeof payload.route === 'string' && payload.route ? payload.route : '/admin';
           if (payload.role === 'admin' || payload.role === 'manager' || payload.role === 'student') {
             st.setCurrentRole(payload.role as Role);
           } else if (route.startsWith('/admin')) {

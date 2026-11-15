@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  isAffirmativeReply,
+  isCloseReply,
   MAX_GUIDE_STEPS,
   truncateTipWords,
   type AvailableRouteHint,
   type GuideClarificationOption,
   type GuideStepResponse,
+  type GuideTroubleshootingContext,
   type PageMapElement,
 } from '@ai-assistant/core';
 import {
@@ -12,22 +15,35 @@ import {
   getAvailableRoutes,
   getElementLabel,
   getPageMap,
+  getVisiblePageErrors,
   isSensitiveDomElement,
 } from '../guide/pageMap.ts';
+import { VoiceController } from '../guide/VoiceController.ts';
+
+const POST_REFRESH_STORAGE_KEY = 'aia_guide_post_refresh';
 
 export interface UseGuideCoBrowserOptions {
   apiUrl: string;
   appId: string;
+  language?: 'auto' | 'en' | 'ml' | string;
+  muted?: boolean;
+  onMuteChange?: (muted: boolean) => void;
   getAuthToken?: () => string | Promise<string>;
   getAvailableRoutes?: () => AvailableRouteHint[];
   getAppContext?: () => string;
   onNavigate?: (route: string) => void;
+  onClarifyRequested?: (clarify: {
+    goal: string;
+    question: string;
+    options: GuideClarificationOption[];
+  }) => void;
 }
 
 export interface StartGuideOptions {
   confirmedPath?: boolean;
   preferredTargetId?: string;
   preferredRoute?: string;
+  postRefreshMessage?: string;
 }
 
 export type StartGuideOutcome =
@@ -39,6 +55,15 @@ export type StartGuideOutcome =
       options: GuideClarificationOption[];
     }
   | { status: 'error'; message: string };
+
+interface GuideHistorySnapshot {
+  stepNumber: number;
+  route: string;
+  decision: GuideStepResponse;
+  summaryHistory: string[];
+  troubleshootingContext: GuideTroubleshootingContext | null;
+  detectedError: string | null;
+}
 
 export interface GuideCoBrowserState {
   active: boolean;
@@ -54,8 +79,16 @@ export interface GuideCoBrowserState {
   cursorPos: { x: number; y: number };
   targetMissing: boolean;
   error: string | null;
+  detectedError: string | null;
+  canGoBack: boolean;
+  muted: boolean;
+  isSpeaking: boolean;
   startGuide: (goal: string, options?: StartGuideOptions) => Promise<StartGuideOutcome>;
   continueAfterInput: () => Promise<void>;
+  goBack: () => Promise<void>;
+  submitUserReply: (reply: string) => Promise<void>;
+  toggleMute: () => void;
+  speakText: (text: string) => void;
   stopGuide: () => void;
 }
 
@@ -128,10 +161,14 @@ async function waitForPageTransitionIfBusy(maxWaitMs = 2200): Promise<void> {
 export function useGuideCoBrowser({
   apiUrl,
   appId,
+  language = 'en',
+  muted: controlledMuted,
+  onMuteChange,
   getAuthToken,
   getAvailableRoutes: getHostAvailableRoutes,
   getAppContext,
   onNavigate,
+  onClarifyRequested,
 }: UseGuideCoBrowserOptions): GuideCoBrowserState {
   const [active, setActive] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -148,21 +185,83 @@ export function useGuideCoBrowser({
   });
   const [targetMissing, setTargetMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detectedError, setDetectedError] = useState<string | null>(null);
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [internalMuted, setInternalMuted] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  const effectiveMuted = typeof controlledMuted === 'boolean' ? controlledMuted : internalMuted;
 
   const sessionTokenRef = useRef(0);
   const summaryHistoryRef = useRef<string[]>([]);
+  const historyStackRef = useRef<GuideHistorySnapshot[]>([]);
+  const currentSnapshotRef = useRef<GuideHistorySnapshot | null>(null);
+  const troubleshootingContextRef = useRef<GuideTroubleshootingContext | null>(null);
+  const lastReportedErrorRef = useRef<string>('');
+  const postRefreshBannerRef = useRef<string>('');
+  const loadingRef = useRef(false);
+  const decisionRef = useRef<GuideStepResponse | null>(null);
   const activeGoalRef = useRef('');
   const pausedRouteRef = useRef('');
   const targetElRef = useRef<HTMLElement | null>(null);
   const timersRef = useRef<number[]>([]);
+  const voiceRef = useRef<VoiceController | null>(null);
+
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
+  const onClarifyRequestedRef = useRef(onClarifyRequested);
+  onClarifyRequestedRef.current = onClarifyRequested;
   const getAuthTokenRef = useRef(getAuthToken);
   getAuthTokenRef.current = getAuthToken;
   const getHostRoutesRef = useRef(getHostAvailableRoutes);
   getHostRoutesRef.current = getHostAvailableRoutes;
   const getAppContextRef = useRef(getAppContext);
   getAppContextRef.current = getAppContext;
+  const onMuteChangeRef = useRef(onMuteChange);
+  onMuteChangeRef.current = onMuteChange;
+
+  loadingRef.current = loading;
+  decisionRef.current = decision;
+
+  // Initialize shared VoiceController for co-browser step & prompt speech output
+  useEffect(() => {
+    const vc = new VoiceController({
+      apiUrl,
+      appId,
+      defaultLang: language === 'ml' ? 'ml' : 'en',
+      getAuthToken: () => (getAuthTokenRef.current ? getAuthTokenRef.current() : ''),
+      onSpeakStart: () => setIsSpeaking(true),
+      onSpeakEnd: () => setIsSpeaking(false),
+    });
+    voiceRef.current = vc;
+    setInternalMuted(vc.isMuted());
+    return () => {
+      vc.destroy();
+      voiceRef.current = null;
+    };
+  }, [apiUrl, appId]);
+
+  useEffect(() => {
+    voiceRef.current?.setLanguage(language === 'ml' ? 'ml' : 'en');
+  }, [language]);
+
+  useEffect(() => {
+    if (typeof controlledMuted === 'boolean' && voiceRef.current) {
+      voiceRef.current.setMuted(controlledMuted);
+    }
+  }, [controlledMuted]);
+
+  const toggleMute = useCallback(() => {
+    const vc = voiceRef.current;
+    const next = vc ? vc.toggleMute() : !effectiveMuted;
+    setInternalMuted(next);
+    onMuteChangeRef.current?.(next);
+  }, [effectiveMuted]);
+
+  const speakText = useCallback((text: string) => {
+    if (!text?.trim()) return;
+    void voiceRef.current?.speak(text);
+  }, []);
 
   const clearTimers = useCallback(() => {
     for (const id of timersRef.current) {
@@ -174,9 +273,16 @@ export function useGuideCoBrowser({
   const stopGuide = useCallback(() => {
     sessionTokenRef.current += 1;
     clearTimers();
+    voiceRef.current?.stop();
     targetElRef.current = null;
     summaryHistoryRef.current = [];
+    historyStackRef.current = [];
+    currentSnapshotRef.current = null;
+    troubleshootingContextRef.current = null;
+    lastReportedErrorRef.current = '';
+    postRefreshBannerRef.current = '';
     activeGoalRef.current = '';
+    setCanGoBack(false);
     setActive(false);
     setChecking(false);
     setLoading(false);
@@ -186,6 +292,7 @@ export function useGuideCoBrowser({
     setTargetRect(null);
     setTargetMissing(false);
     setError(null);
+    setDetectedError(null);
     setStepNumber(0);
   }, [clearTimers]);
 
@@ -248,24 +355,118 @@ export function useGuideCoBrowser({
       rawDecision: GuideStepResponse,
       stepNum: number,
       sessionToken: number,
-      onAdvance: (nextStep: number, tok: number) => void
+      onAdvance: (nextStep: number, tok: number) => void,
+      options: { recordHistory?: boolean; forcePauseOnBack?: boolean } = {}
     ) => {
-      const nextTip = truncateTipWords(rawDecision.tip || 'Follow this step.');
+      const { recordHistory = true, forcePauseOnBack = false } = options;
+
+      // Record previous active step before moving to the new one
+      if (recordHistory && currentSnapshotRef.current) {
+        historyStackRef.current.push(currentSnapshotRef.current);
+        if (historyStackRef.current.length > 20) {
+          historyStackRef.current.shift();
+        }
+        setCanGoBack(historyStackRef.current.length > 0);
+      }
+
+      const rawTip = rawDecision.tip || 'Follow this step.';
+      const isPromptLike =
+        rawDecision.action === 'ask_user' || rawDecision.action === 'refresh_and_retry';
+      let nextTip = isPromptLike
+        ? rawTip.trim()
+        : truncateTipWords(rawTip);
+
+      // On first step right after refresh recovery, surface & speak retry guidance
+      const postRefreshPrefix = postRefreshBannerRef.current;
+      if (postRefreshPrefix) {
+        postRefreshBannerRef.current = '';
+        nextTip = `${postRefreshPrefix} ${nextTip}`.trim();
+      }
+
       const normalized: GuideStepResponse = { ...rawDecision, tip: nextTip };
+      const currentRouteNow =
+        typeof window !== 'undefined' ? window.location.pathname : '/';
+
       setLoading(false);
       setDecision(normalized);
+
+      // Update troubleshooting context when entering or leaving ask_user
+      if (normalized.action === 'ask_user') {
+        const nextCtx: GuideTroubleshootingContext = {
+          errorText: lastReportedErrorRef.current || troubleshootingContextRef.current?.errorText || '',
+          questionAsked: normalized.question || nextTip,
+          stage: normalized.askStage === 'follow_up_guide' ? 'follow_up_guide' : 'diagnostic',
+        };
+        troubleshootingContextRef.current = nextCtx;
+      } else {
+        troubleshootingContextRef.current = null;
+      }
+
+      currentSnapshotRef.current = {
+        stepNumber: stepNum,
+        route: currentRouteNow,
+        decision: normalized,
+        summaryHistory: [...summaryHistoryRef.current],
+        troubleshootingContext: troubleshootingContextRef.current,
+        detectedError: lastReportedErrorRef.current || null,
+      };
+      setCanGoBack(historyStackRef.current.length > 0);
+
+      // Speak instruction or question aloud immediately
+      const spokenText =
+        normalized.action === 'ask_user'
+          ? normalized.question || normalized.tip
+          : normalized.tip;
+      if (spokenText) {
+        void voiceRef.current?.speak(spokenText);
+      }
+
+      if (normalized.action === 'refresh_and_retry') {
+        targetElRef.current = null;
+        setTargetRect(null);
+        setTargetMissing(false);
+        setPausedForInput(false);
+        if (typeof window !== 'undefined') {
+          try {
+            sessionStorage.setItem(
+              POST_REFRESH_STORAGE_KEY,
+              JSON.stringify({
+                goal: activeGoalRef.current,
+                tip: 'App refreshed. Try signing in again.',
+                timestamp: Date.now(),
+              })
+            );
+          } catch {
+            // ignore storage errors
+          }
+          const reloadTimer = window.setTimeout(() => {
+            if (sessionToken === sessionTokenRef.current) {
+              window.location.reload();
+            }
+          }, 450);
+          timersRef.current.push(reloadTimer);
+        }
+        return;
+      }
+
+      if (normalized.action === 'ask_user') {
+        targetElRef.current = null;
+        setTargetRect(null);
+        setTargetMissing(false);
+        setPausedForInput(true);
+        return;
+      }
 
       if (normalized.action === 'complete') {
         targetElRef.current = null;
         setTargetRect(null);
         setTargetMissing(false);
         setPausedForInput(false);
-        // Automatically close the guide shortly after showing the completion feedback
         const autoCloseTimer = window.setTimeout(() => {
           if (sessionToken === sessionTokenRef.current) {
             stopGuide();
           }
-        }, 1600);
+        }, 1800);
         timersRef.current.push(autoCloseTimer);
         return;
       }
@@ -280,6 +481,11 @@ export function useGuideCoBrowser({
         } else if (typeof window !== 'undefined' && window.location.pathname !== nextRoute) {
           window.history.pushState({}, '', nextRoute);
           window.dispatchEvent(new PopStateEvent('popstate'));
+        }
+
+        if (forcePauseOnBack) {
+          setPausedForInput(true);
+          return;
         }
 
         const t = window.setTimeout(() => {
@@ -297,8 +503,7 @@ export function useGuideCoBrowser({
         targetElRef.current = null;
         setTargetRect(null);
         setTargetMissing(true);
-        pausedRouteRef.current =
-          typeof window !== 'undefined' ? window.location.pathname : '/';
+        pausedRouteRef.current = currentRouteNow;
         setPausedForInput(true);
         return;
       }
@@ -322,6 +527,7 @@ export function useGuideCoBrowser({
 
       // Client-side safety guardrail: NEVER auto-click sensitive controls or input fields
       if (
+        !forcePauseOnBack &&
         normalized.action === 'click_safe' &&
         !domSensitive &&
         !inputEl &&
@@ -344,7 +550,6 @@ export function useGuideCoBrowser({
         return;
       }
 
-      // point_and_wait (or blocked sensitive button / input): pause & await human action
       if (domSensitive || normalized.sensitiveBlocked) {
         setSensitiveBlocked(true);
       }
@@ -356,8 +561,7 @@ export function useGuideCoBrowser({
         }
       }
 
-      pausedRouteRef.current =
-        typeof window !== 'undefined' ? window.location.pathname : '/';
+      pausedRouteRef.current = currentRouteNow;
       summaryHistoryRef.current.push(`Guided user to ${normalized.targetId} (${label})`);
       setPausedForInput(true);
     },
@@ -376,6 +580,9 @@ export function useGuideCoBrowser({
       preferredRoute?: string;
       availableRoutes?: AvailableRouteHint[];
       appContext?: string;
+      pageErrors?: string[];
+      userReply?: string;
+      troubleshootingContext?: GuideTroubleshootingContext;
     }): Promise<GuideStepResponse> => {
       const token = getAuthTokenRef.current ? await getAuthTokenRef.current() : '';
       const headers: Record<string, string> = {
@@ -399,6 +606,13 @@ export function useGuideCoBrowser({
           ? { preferredRoute: payload.preferredRoute.slice(0, 300) }
           : {}),
         ...(payload.appContext ? { appContext: payload.appContext.slice(0, 500) } : {}),
+        ...(payload.pageErrors && payload.pageErrors.length > 0
+          ? { pageErrors: payload.pageErrors.slice(0, 5).map((e) => e.slice(0, 220)) }
+          : {}),
+        ...(payload.userReply ? { userReply: payload.userReply.slice(0, 380) } : {}),
+        ...(payload.troubleshootingContext
+          ? { troubleshootingContext: payload.troubleshootingContext }
+          : {}),
       };
 
       const base = apiUrl ? apiUrl.replace(/\/$/, '') : '';
@@ -450,13 +664,21 @@ export function useGuideCoBrowser({
       setSensitiveBlocked(false);
       setError(null);
 
-      // If previous click triggered an async transition (e.g. login -> leaving animation), wait briefly for destination DOM
       await waitForPageTransitionIfBusy(2200);
       if (sessionToken !== sessionTokenRef.current) return;
 
       const currentRoute =
         typeof window !== 'undefined' ? window.location.pathname : '/';
       const pageMap: PageMapElement[] = getPageMap({ currentRoute });
+      const visibleErrors = getVisiblePageErrors();
+      const freshError = visibleErrors.find((e) => e !== lastReportedErrorRef.current);
+      if (freshError) {
+        lastReportedErrorRef.current = freshError;
+        setDetectedError(freshError);
+      } else if (visibleErrors.length === 0) {
+        setDetectedError(null);
+      }
+
       const domRoutes = getAvailableRoutes();
       const hostRoutes = getHostRoutesRef.current ? getHostRoutesRef.current() : [];
       const availableRoutes = mergeAvailableRoutes(domRoutes, hostRoutes);
@@ -471,6 +693,7 @@ export function useGuideCoBrowser({
           currentRoute,
           pageMap,
           confirmedPath: true,
+          ...(freshError ? { pageErrors: [freshError] } : {}),
           ...(availableRoutes.length > 0 ? { availableRoutes } : {}),
           ...(appContext ? { appContext } : {}),
         });
@@ -489,9 +712,106 @@ export function useGuideCoBrowser({
     [applyStepDecision, requestGuideStep, stopGuide]
   );
 
+  // Trigger troubleshooting automatically when an error alert appears on the page during a guide
+  const triggerTroubleshootingForErrors = useCallback(
+    async (errors: string[], tok: number) => {
+      if (tok !== sessionTokenRef.current || errors.length === 0) return;
+      if (loadingRef.current || decisionRef.current?.action === 'ask_user') return;
+
+      const firstErr = errors[0]!;
+      lastReportedErrorRef.current = firstErr;
+      setDetectedError(firstErr);
+      setLoading(true);
+      setPausedForInput(false);
+
+      const currentRoute =
+        typeof window !== 'undefined' ? window.location.pathname : '/';
+      const pageMap = getPageMap({ currentRoute });
+      const previousStepSummary = compactStepHistory(summaryHistoryRef.current, 380);
+
+      try {
+        const rawDecision = await requestGuideStep({
+          goal: activeGoalRef.current,
+          previousStepSummary,
+          stepNumber: Math.max(1, stepNumber),
+          currentRoute,
+          pageMap,
+          confirmedPath: true,
+          pageErrors: errors,
+        });
+        if (tok !== sessionTokenRef.current) return;
+        applyStepDecision(rawDecision, Math.max(1, stepNumber), tok, (nextStep, nextTok) => {
+          void fetchNextStep(nextStep, nextTok);
+        });
+      } catch (err) {
+        if (tok !== sessionTokenRef.current) return;
+        setLoading(false);
+        setError(err instanceof Error ? err.message : 'Unable to resolve page error.');
+      }
+    },
+    [applyStepDecision, fetchNextStep, requestGuideStep, stepNumber]
+  );
+
+  // Observe visible host-DOM error alerts while a guide is active & awaiting user input
+  useEffect(() => {
+    if (!active || typeof document === 'undefined' || typeof MutationObserver === 'undefined') {
+      return;
+    }
+
+    let timerId = 0;
+    const scanForErrors = () => {
+      if (loadingRef.current) return;
+      const curAction = decisionRef.current?.action;
+      if (curAction === 'ask_user' || curAction === 'refresh_and_retry' || curAction === 'complete') {
+        return;
+      }
+      const errs = getVisiblePageErrors();
+      if (errs.length === 0) {
+        if (lastReportedErrorRef.current) {
+          lastReportedErrorRef.current = '';
+          setDetectedError(null);
+        }
+        return;
+      }
+      const unseen = errs.filter((e) => e !== lastReportedErrorRef.current);
+      if (unseen.length > 0) {
+        const tok = sessionTokenRef.current;
+        void triggerTroubleshootingForErrors(unseen, tok);
+      }
+    };
+
+    const observer = new MutationObserver((mutations) => {
+      const hasHostMutation = mutations.some((m) => {
+        const target = m.target instanceof Element ? m.target : m.target.parentElement;
+        return !target?.closest('.aia-root, .aia-guide-cursor-root, .aia-guide-root');
+      });
+      if (!hasHostMutation) return;
+      if (timerId) window.clearTimeout(timerId);
+      timerId = window.setTimeout(scanForErrors, 160);
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['style', 'class', 'hidden', 'aria-hidden'],
+    });
+
+    // Also run once immediately and periodically in case CSS/Framer fade-in finishes after mutation
+    timerId = window.setTimeout(scanForErrors, 160);
+    const pollId = window.setInterval(scanForErrors, 400);
+
+    return () => {
+      if (timerId) window.clearTimeout(timerId);
+      window.clearInterval(pollId);
+      observer.disconnect();
+    };
+  }, [active, pausedForInput, decision, triggerTroubleshootingForErrors]);
+
   // When paused on a sensitive button or interactive control, clicking it directly, pressing Enter, or navigating forward advances cleanly
   useEffect(() => {
-    if (!active || !pausedForInput || !decision) return;
+    if (!active || !pausedForInput || !decision || decision.action === 'ask_user') return;
     const el = targetElRef.current;
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -511,10 +831,15 @@ export function useGuideCoBrowser({
       if (el && (isSensitiveDomElement(el) || !isInputControl(el))) {
         const tok = sessionTokenRef.current;
         const t = window.setTimeout(() => {
-          if (tok === sessionTokenRef.current) {
+          if (
+            tok === sessionTokenRef.current &&
+            !loadingRef.current &&
+            decisionRef.current?.action !== 'ask_user' &&
+            decisionRef.current?.action !== 'refresh_and_retry'
+          ) {
             void fetchNextStep(stepNumber + 1, tok);
           }
-        }, 420);
+        }, 460);
         timersRef.current.push(t);
       }
     };
@@ -558,8 +883,15 @@ export function useGuideCoBrowser({
       const token = sessionTokenRef.current + 1;
       sessionTokenRef.current = token;
       summaryHistoryRef.current = [];
+      historyStackRef.current = [];
+      currentSnapshotRef.current = null;
+      troubleshootingContextRef.current = null;
+      lastReportedErrorRef.current = '';
+      postRefreshBannerRef.current = options.postRefreshMessage || '';
       targetElRef.current = null;
       activeGoalRef.current = cleanGoal;
+      setCanGoBack(false);
+      setDetectedError(null);
 
       setChecking(true);
       setError(null);
@@ -610,7 +942,6 @@ export function useGuideCoBrowser({
           };
         }
 
-        // Launch GuideCursor immediately on Step 1 decision
         setGoal(cleanGoal);
         setStepNumber(1);
         setActive(true);
@@ -619,9 +950,15 @@ export function useGuideCoBrowser({
         setSensitiveBlocked(false);
         setTargetMissing(false);
 
-        applyStepDecision(rawDecision, 1, token, (nextStep, tok) => {
-          void fetchNextStep(nextStep, tok);
-        });
+        applyStepDecision(
+          rawDecision,
+          1,
+          token,
+          (nextStep, tok) => {
+            void fetchNextStep(nextStep, tok);
+          },
+          { recordHistory: false }
+        );
 
         return { status: 'started' };
       } catch (err) {
@@ -636,6 +973,149 @@ export function useGuideCoBrowser({
       }
     },
     [applyStepDecision, clearTimers, fetchNextStep, requestGuideStep]
+  );
+
+  // Resume automatically after a troubleshooting refresh_and_retry page reload
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let raw: string | null = null;
+    try {
+      raw = sessionStorage.getItem(POST_REFRESH_STORAGE_KEY);
+      if (raw) {
+        sessionStorage.removeItem(POST_REFRESH_STORAGE_KEY);
+      }
+    } catch {
+      raw = null;
+    }
+    if (!raw) return;
+
+    try {
+      const parsed = JSON.parse(raw) as { goal?: string; tip?: string; timestamp?: number };
+      if (
+        parsed?.goal &&
+        (!parsed.timestamp || Date.now() - parsed.timestamp < 5 * 60 * 1000)
+      ) {
+        const timer = window.setTimeout(() => {
+          void startGuide(parsed.goal!, {
+            confirmedPath: true,
+            postRefreshMessage: parsed.tip || 'App refreshed. Try again.',
+          });
+        }, 250);
+        return () => window.clearTimeout(timer);
+      }
+    } catch {
+      // ignore malformed storage
+    }
+  }, [startGuide]);
+
+  const goBack = useCallback(async () => {
+    if (!active || loading) return;
+    const prev = historyStackRef.current.pop();
+    if (!prev) {
+      setCanGoBack(false);
+      return;
+    }
+
+    clearTimers();
+    const tok = sessionTokenRef.current + 1;
+    sessionTokenRef.current = tok;
+
+    const exitingError = currentSnapshotRef.current?.detectedError || '';
+    summaryHistoryRef.current = [...prev.summaryHistory];
+    troubleshootingContextRef.current = prev.troubleshootingContext;
+    lastReportedErrorRef.current = prev.detectedError || exitingError || '';
+    currentSnapshotRef.current = null;
+
+    setStepNumber(prev.stepNumber);
+    setDetectedError(prev.detectedError);
+    setError(null);
+    setLoading(false);
+    setSensitiveBlocked(Boolean(prev.decision.sensitiveBlocked));
+    setCanGoBack(historyStackRef.current.length > 0);
+
+    const curRoute = typeof window !== 'undefined' ? window.location.pathname : '/';
+    if (prev.route && prev.route !== curRoute) {
+      if (onNavigateRef.current) {
+        onNavigateRef.current(prev.route);
+      } else if (typeof window !== 'undefined') {
+        window.history.pushState({}, '', prev.route);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }
+      await new Promise((r) => setTimeout(r, 200));
+      if (tok !== sessionTokenRef.current) return;
+    }
+
+    applyStepDecision(
+      prev.decision,
+      prev.stepNumber,
+      tok,
+      (nextStep, nextTok) => {
+        void fetchNextStep(nextStep, nextTok);
+      },
+      { recordHistory: false, forcePauseOnBack: true }
+    );
+  }, [active, loading, clearTimers, applyStepDecision, fetchNextStep]);
+
+  const submitUserReply = useCallback(
+    async (rawReply: string) => {
+      const reply = rawReply.trim();
+      if (!active || loading || !reply) return;
+
+      const ctx = troubleshootingContextRef.current;
+
+      // In follow-up guide stage, a new non-close, non-bare-yes topic launches a fresh guide immediately
+      if (ctx?.stage === 'follow_up_guide') {
+        if (isCloseReply(reply)) {
+          void voiceRef.current?.speak('Closing guide.');
+          stopGuide();
+          return;
+        }
+        if (!isAffirmativeReply(reply)) {
+          const outcome = await startGuide(reply);
+          if (outcome.status === 'clarify') {
+            onClarifyRequestedRef.current?.({
+              goal: outcome.goal,
+              question: outcome.question,
+              options: outcome.options,
+            });
+          }
+          return;
+        }
+      }
+
+      setLoading(true);
+      setError(null);
+
+      const tok = sessionTokenRef.current;
+      const currentRoute =
+        typeof window !== 'undefined' ? window.location.pathname : '/';
+      const pageMap = getPageMap({ currentRoute });
+      const previousStepSummary = compactStepHistory(summaryHistoryRef.current, 380);
+
+      try {
+        const rawDecision = await requestGuideStep({
+          goal: activeGoalRef.current,
+          previousStepSummary,
+          stepNumber: Math.max(1, stepNumber),
+          currentRoute,
+          pageMap,
+          confirmedPath: true,
+          userReply: reply,
+          ...(ctx ? { troubleshootingContext: ctx } : {}),
+        });
+
+        if (tok !== sessionTokenRef.current) return;
+
+        applyStepDecision(rawDecision, Math.max(1, stepNumber), tok, (nextStep, nextTok) => {
+          void fetchNextStep(nextStep, nextTok);
+        });
+      } catch (err) {
+        if (tok !== sessionTokenRef.current) return;
+        setLoading(false);
+        setError(err instanceof Error ? err.message : 'Unable to process your reply.');
+      }
+    },
+    [active, applyStepDecision, fetchNextStep, loading, requestGuideStep, startGuide, stepNumber, stopGuide]
   );
 
   const continueAfterInput = useCallback(async () => {
@@ -664,8 +1144,16 @@ export function useGuideCoBrowser({
     cursorPos,
     targetMissing,
     error,
+    detectedError,
+    canGoBack,
+    muted: effectiveMuted,
+    isSpeaking,
     startGuide,
     continueAfterInput,
+    goBack,
+    submitUserReply,
+    toggleMute,
+    speakText,
     stopGuide,
   };
 }

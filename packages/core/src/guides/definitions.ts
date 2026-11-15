@@ -1099,6 +1099,95 @@ export const AUTHORED_GUIDES: GuideDef[] = [
       },
     },
   },
+  {
+    guideId: 'public.demo',
+    title: {
+      en: 'Open Demo Mode',
+      ml: 'ഡെമോ മോഡ് തുറക്കുക',
+    },
+    summary: {
+      en: 'Launch the sample Khazna demo college as Admin, Sector Manager, or Student with one click.',
+      ml: 'അഡ്മിൻ, സെക്ടർ മാനേജർ, അല്ലെങ്കിൽ വിദ്യാർത്ഥി ആയി ഡെമോ മോഡ് തുറക്കുക.',
+    },
+    keywords: [
+      'demo',
+      'domo',
+      'demo mode',
+      'domo model',
+      'open demo',
+      'try demo',
+      'sample college',
+      'preview',
+    ],
+    roles: 'public',
+    startRoute: '/login',
+    steps: [
+      {
+        stepId: 'pick-demo-role',
+        route: '/login',
+        target: {
+          guideId: 'login-demo-admin-btn',
+          fallbacks: ['login-demo-manager-btn', 'login-demo-student-btn'],
+        },
+        instruction: {
+          en: 'Choose Admin, Sector Manager, or Student under Try the demo to open the sample college.',
+          ml: 'ഡെമോ തുറക്കാൻ Try the demo-യ്ക്ക് കീഴിൽ അഡ്മിൻ, മാനേജർ, അല്ലെങ്കിൽ വിദ്യാർത്ഥി തിരഞ്ഞെടുക്കുക.',
+        },
+        action: 'click',
+        completeWhen: { type: 'click' },
+      },
+    ],
+    completion: {
+      message: {
+        en: 'Demo workspace opened with sample Khazna data.',
+        ml: 'ഡെമോ മോഡ് വിജയകരമായി തുറന്നു.',
+      },
+    },
+  },
+  {
+    guideId: 'auth.logout',
+    title: {
+      en: 'Sign Out of Current Session',
+      ml: 'നിലവിലെ സെഷനിൽ നിന്ന് ലോഗ് ഔട്ട് ചെയ്യുക',
+    },
+    summary: {
+      en: 'Sign out safely and return to the Khazna portal login screen.',
+      ml: 'സുരക്ഷിതമായി ലോഗ് ഔട്ട് ചെയ്ത് ലോഗിൻ പേജിലേക്ക് മടങ്ങുക.',
+    },
+    keywords: [
+      'logout',
+      'log out',
+      'signout',
+      'sign out',
+      'end session',
+      'log out this section',
+      'ലോഗ് ഔട്ട്',
+    ],
+    roles: ['ADMIN', 'SECTOR_MANAGER', 'STUDENT', 'SUPER_ADMIN'],
+    startRoute: '/app',
+    steps: [
+      {
+        stepId: 'click-signout',
+        route: '/app',
+        target: {
+          guideId: 'header-signout-link',
+          fallbacks: ['user-menu-btn'],
+        },
+        instruction: {
+          en: 'Use Sign out in the top bar (or open your profile menu) to log out of your current session.',
+          ml: 'ലോഗ് ഔട്ട് ചെയ്യാൻ മുകളിലുള്ള Sign out അല്ലെങ്കിൽ പ്രൊഫൈൽ മെനു ഉപയോഗിക്കുക.',
+        },
+        action: 'click',
+        completeWhen: { type: 'click' },
+      },
+    ],
+    completion: {
+      message: {
+        en: 'Signed out and returned to the login page.',
+        ml: 'വിജയകരമായി ലോഗ് ഔട്ട് ചെയ്തു.',
+      },
+    },
+  },
 ];
 
 export const ALL_GUIDES = AUTHORED_GUIDES;

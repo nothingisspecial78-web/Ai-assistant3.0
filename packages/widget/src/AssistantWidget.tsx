@@ -236,13 +236,34 @@ export function AssistantWidget({
   const guideCoBrowser = useGuideCoBrowser({
     apiUrl,
     appId,
+    language: personalization.preferredLanguage || 'en',
+    muted: avatarMuted,
+    onMuteChange: (next) => {
+      setAvatarMuted(next);
+      guideEngineRef.current?.voiceController.setMuted(next);
+    },
     getAuthToken,
     getAvailableRoutes,
     getAppContext,
     onNavigate: (route) => {
       onAppCommandRef.current?.('NAVIGATE', { route });
     },
+    onClarifyRequested: (clarify) => {
+      appendGuideClarification({
+        goal: clarify.goal,
+        question: clarify.question,
+        options: clarify.options,
+      });
+      speakGuideTextRef.current(clarify.question);
+      if (isMobileViewport) {
+        setMobileMode('full');
+      }
+      setOpen(true);
+    },
   });
+
+  const speakGuideTextRef = useRef(guideCoBrowser.speakText);
+  speakGuideTextRef.current = guideCoBrowser.speakText;
 
   const launchCoBrowserGuide = useCallback(
     async (goalText: string, options?: StartGuideOptions) => {
@@ -253,6 +274,7 @@ export function AssistantWidget({
           question: outcome.question,
           options: outcome.options,
         });
+        speakGuideTextRef.current(outcome.question);
         if (isMobileViewport) {
           setMobileMode('full');
         }
@@ -593,6 +615,13 @@ export function AssistantWidget({
     [appName, title, appId]
   );
 
+  const isAgentWorking =
+    guideCoBrowser.active ||
+    guideCoBrowser.checking ||
+    Boolean(activeGuide) ||
+    agentCursorActive ||
+    isStreaming;
+
   const isScreenSharing =
     guideCoBrowser.active || Boolean(activeGuide) || inspecting || agentCursorActive;
   const screenShareModeLabel = inspecting
@@ -603,7 +632,7 @@ export function AssistantWidget({
 
   return (
     <div className="aia-root" style={rootStyle}>
-      <UserCursorOverlay enabled={enabled && !inspecting} label="You" />
+      <UserCursorOverlay enabled={enabled && !inspecting && isAgentWorking} label="You" />
 
       <ScreenShareGlow
         active={isScreenSharing}
@@ -804,6 +833,10 @@ export function AssistantWidget({
             messages={messages}
             suggestions={combinedChips.map((c) => c.prompt)}
             mobileCompactMode={isMobileViewport && mobileMode === 'compact'}
+            apiUrl={apiUrl}
+            appId={appId}
+            language={personalization.preferredLanguage || 'en'}
+            getAuthToken={getAuthToken}
             onExpandMobileHistory={() => setMobileMode('full')}
             onSuggestionClick={(q) => {
               const matched = combinedChips.find((c) => c.prompt === q);
@@ -836,6 +869,9 @@ export function AssistantWidget({
               setPendingContexts([]);
             }}
             onSelectGuideOption={handleSelectGuideOption}
+            onVoiceClarificationReply={(transcript) => {
+              tryResolvePendingClarification(transcript);
+            }}
             onSubmitForm={submitInteractiveForm}
             onCancelForm={cancelInteractiveForm}
             onConfirmAction={confirmAction}
@@ -853,6 +889,7 @@ export function AssistantWidget({
             apiUrl={apiUrl}
             appId={appId}
             defaultLanguage={personalization.preferredLanguage || 'auto'}
+            getAuthToken={getAuthToken}
             voiceAutoSend={Boolean(personalization.voiceAutoSend)}
             pendingContexts={pendingContexts}
             onClearContext={() => setPendingContexts([])}
@@ -906,6 +943,10 @@ export function AssistantWidget({
       <GuideCursor
         active={guideCoBrowser.active}
         appName={resolvedAppName}
+        apiUrl={apiUrl}
+        appId={appId}
+        language={personalization.preferredLanguage || 'en'}
+        getAuthToken={getAuthToken}
         stepNumber={guideCoBrowser.stepNumber}
         maxSteps={guideCoBrowser.maxSteps}
         loading={guideCoBrowser.loading}
@@ -916,7 +957,14 @@ export function AssistantWidget({
         cursorPos={guideCoBrowser.cursorPos}
         targetMissing={guideCoBrowser.targetMissing}
         error={guideCoBrowser.error}
+        detectedError={guideCoBrowser.detectedError}
+        canGoBack={guideCoBrowser.canGoBack}
+        muted={guideCoBrowser.muted}
+        isSpeaking={guideCoBrowser.isSpeaking}
+        onBack={() => void guideCoBrowser.goBack()}
         onNext={() => void guideCoBrowser.continueAfterInput()}
+        onReply={(reply) => void guideCoBrowser.submitUserReply(reply)}
+        onToggleMute={guideCoBrowser.toggleMute}
         onStop={guideCoBrowser.stopGuide}
       />
 

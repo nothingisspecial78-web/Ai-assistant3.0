@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Crosshair, Layers, Mic, MicOff, Navigation, Paperclip, Plus, Send, Sparkles, X } from 'lucide-react';
 import type { ChatAttachment, RightClickContext } from '@ai-assistant/core';
+import { useVoiceInput } from '../hooks/useVoiceInput.ts';
 
 export interface ComposerProps {
   disabled?: boolean;
   apiUrl?: string;
   appId?: string;
   defaultLanguage?: 'auto' | 'en' | 'ml';
+  getAuthToken?: () => string | Promise<string>;
   voiceAutoSend?: boolean;
   pendingContext?: RightClickContext | null;
   pendingContexts?: RightClickContext[];
@@ -27,35 +29,12 @@ export interface ComposerProps {
   ) => void;
 }
 
-interface SpeechRecognitionAlternativeLike {
-  transcript: string;
-}
-
-interface SpeechRecognitionResultLike {
-  0: SpeechRecognitionAlternativeLike;
-  isFinal: boolean;
-}
-
-interface SpeechRecognitionEventLike {
-  results: ArrayLike<SpeechRecognitionResultLike>;
-}
-
-interface SpeechRecognitionInstance {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  onresult: ((e: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((e: { error?: string }) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-}
-
 export function Composer({
   disabled = false,
   apiUrl = '',
   appId = 'khazna-ledger',
   defaultLanguage = 'auto',
+  getAuthToken,
   voiceAutoSend = false,
   pendingContext,
   pendingContexts,
@@ -73,18 +52,37 @@ export function Composer({
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [plusOpen, setPlusOpen] = useState(false);
   const [uploadTargetArea, setUploadTargetArea] = useState<'auto' | 'students' | 'managers' | 'bulk-entries'>('auto');
-  const [recordingState, setRecordingState] = useState<'idle' | 'listening' | 'transcribing'>('idle');
-  const [micError, setMicError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const plusContainerRef = useRef<HTMLDivElement | null>(null);
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     setLanguage(defaultLanguage);
   }, [defaultLanguage]);
+
+  const applyTranscript = (transcript: string) => {
+    const clean = transcript.trim();
+    if (!clean) return;
+    if (voiceAutoSend) {
+      onSend({
+        text: clean,
+        attachments: attachments.length > 0 ? attachments : undefined,
+        language: language === 'auto' ? undefined : language,
+      });
+      setText('');
+      setAttachments([]);
+    } else {
+      setText((prev) => (prev.trim() ? `${prev.trim()} ${clean}` : clean));
+    }
+  };
+
+  const { recordingState, micError, toggleVoiceInput } = useVoiceInput({
+    apiUrl,
+    appId,
+    language,
+    getAuthToken,
+    onTranscript: applyTranscript,
+  });
 
   // Close + popover when clicking outside or pressing Escape
   useEffect(() => {
@@ -158,166 +156,6 @@ export function Composer({
         }
       }
     }
-  };
-
-  const applyTranscript = (transcript: string) => {
-    const clean = transcript.trim();
-    if (!clean) return;
-    if (voiceAutoSend) {
-      onSend({
-        text: clean,
-        attachments: attachments.length > 0 ? attachments : undefined,
-        language: language === 'auto' ? undefined : language,
-      });
-      setText('');
-      setAttachments([]);
-    } else {
-      setText((prev) => (prev.trim() ? `${prev.trim()} ${clean}` : clean));
-    }
-  };
-
-  const startMediaRecorder = async () => {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      setMicError('Microphone recording is not supported in this browser.');
-      setRecordingState('idle');
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
-      const recorder = new MediaRecorder(stream, { mimeType });
-      mediaChunksRef.current = [];
-
-      recorder.ondataavailable = (ev) => {
-        if (ev.data.size > 0) mediaChunksRef.current.push(ev.data);
-      };
-
-      recorder.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(mediaChunksRef.current, { type: mimeType });
-        if (blob.size === 0) {
-          setRecordingState('idle');
-          return;
-        }
-        setRecordingState('transcribing');
-        const reader = new FileReader();
-        reader.onload = async () => {
-          try {
-            const dataUrl = String(reader.result || '');
-            const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-            const baseUrl = apiUrl.replace(/\/$/, '');
-            const res = await fetch(`${baseUrl}/api/transcribe`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-app-id': appId,
-              },
-              body: JSON.stringify({
-                audioBase64: base64,
-                mimeType,
-                language: language === 'auto' ? undefined : language,
-              }),
-            });
-            const json = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
-            if (!res.ok) {
-              throw new Error(json.error || `Transcription failed (${res.status})`);
-            }
-            if (json.text) {
-              applyTranscript(json.text);
-            } else {
-              setMicError('No speech detected. Try again.');
-            }
-          } catch (err) {
-            setMicError(err instanceof Error ? err.message : 'Voice transcription failed.');
-          } finally {
-            setRecordingState('idle');
-            mediaRecorderRef.current = null;
-          }
-        };
-        reader.readAsDataURL(blob);
-      };
-
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      setRecordingState('listening');
-    } catch {
-      setMicError('Microphone permission denied or unavailable.');
-      setRecordingState('idle');
-    }
-  };
-
-  const toggleVoiceInput = () => {
-    setMicError(null);
-
-    if (recordingState === 'listening') {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-        recognitionRef.current = null;
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      } else {
-        setRecordingState('idle');
-      }
-      return;
-    }
-
-    if (recordingState === 'transcribing') return;
-
-    const SpeechCtor =
-      typeof window !== 'undefined'
-        ? ((window as unknown as Record<string, unknown>).SpeechRecognition ||
-            (window as unknown as Record<string, unknown>).webkitSpeechRecognition)
-        : undefined;
-
-    if (typeof SpeechCtor === 'function') {
-      try {
-        const rec = new (SpeechCtor as new () => SpeechRecognitionInstance)();
-        rec.lang = language === 'ml' ? 'ml-IN' : 'en-IN';
-        rec.continuous = false;
-        rec.interimResults = false;
-
-        let captured = false;
-        rec.onresult = (event) => {
-          const transcript = Array.from(event.results)
-            .map((r) => r[0]?.transcript || '')
-            .join(' ')
-            .trim();
-          if (transcript) {
-            captured = true;
-            applyTranscript(transcript);
-          }
-        };
-        rec.onerror = (ev) => {
-          recognitionRef.current = null;
-          if (ev?.error === 'not-allowed' || ev?.error === 'service-not-allowed') {
-            setMicError('Microphone permission denied.');
-            setRecordingState('idle');
-            return;
-          }
-          // Fall back to server audio transcription if browser SpeechRecognition fails
-          void startMediaRecorder();
-        };
-        rec.onend = () => {
-          recognitionRef.current = null;
-          if (captured || mediaRecorderRef.current) {
-            setRecordingState((cur) => (cur === 'listening' && !mediaRecorderRef.current ? 'idle' : cur));
-          } else {
-            setRecordingState('idle');
-          }
-        };
-
-        recognitionRef.current = rec;
-        setRecordingState('listening');
-        rec.start();
-        return;
-      } catch {
-        recognitionRef.current = null;
-      }
-    }
-
-    void startMediaRecorder();
   };
 
   const submit = () => {

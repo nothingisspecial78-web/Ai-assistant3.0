@@ -6,12 +6,14 @@ import type {
   PageMapElement,
 } from './schemas.ts';
 
-export const ALLOWED_GUIDE_ACTIONS: readonly GuideStepAction[] = [
+export const ALLOWED_GUIDE_ACTIONS = [
   'navigate',
   'point_and_wait',
   'click_safe',
   'complete',
 ] as const;
+
+export type CoreGuideAction = (typeof ALLOWED_GUIDE_ACTIONS)[number];
 
 export const MAX_GUIDE_STEPS = 10;
 
@@ -68,13 +70,23 @@ export function shouldTriggerGuideMode(text: string): boolean {
     !/\bhow do i\b|\bshow me where\b|\bguide me\b/.test(lower);
   if (looksLikeDirectBulkEdit) return false;
 
-  // Explicit "guide ...", "how do I...", "show me where...", "walk me through...", "help me login..."
+  // Explicit "guide ...", "how do I...", "show me where...", "walk me through...", "help me login...", or opening demo/domo mode
   const hasGuideCue =
-    /^(?:please\s+)?guide\b|\bguide\s+me\b|\bhow do i\b|\bhow to\b|\bshow me where\b|\bshow me how\b|\bwhere do i\b|\bwhere can i\b|\bwhere is\b|\bwalk me through\b|\bpoint me to\b|\btake me to\b|^(?:please\s+)?help me\s+(?:with\s+|to\s+|on\s+)?(?:log\s*in|sign\s*in|register|export|import|add|create|edit|delete|void|pay|manage|find|open)\b/.test(
+    /^(?:please\s+)?guide\b|\bguide\s+me\b|\bhow do i\b|\bhow to\b|\bshow me where\b|\bshow me how\b|\bwhere do i\b|\bwhere can i\b|\bwhere is\b|\bwalk me through\b|\bpoint me to\b|\btake me to\b|^(?:please\s+)?help me\s+(?:with\s+|to\s+|on\s+)?(?:log\s*in|sign\s*in|register|export|import|add|create|edit|delete|void|pay|manage|find|open|demo|domo)\b/.test(
       lower
     );
 
-  return hasGuideCue;
+  const hasDemoGuideCue =
+    /\b(?:open|start|launch|enter|use|try|access|load)\s+(?:the\s+|a\s+)?(?:demo|domo)(?:\s+(?:mode|model|account|accounts|portal|workspace|session))?\b|\b(?:demo|domo)\s+(?:mode|model)\b/.test(
+      lower
+    );
+
+  const hasDirectLoginRoleCue =
+    /^(?:please\s+)?(?:i\s+want\s+to\s+|let\s+me\s+)?(?:log\s*in|sign\s*in|login|signin)\s+(?:as\s+)?(?:a\s+|an\s+)?(?:student|manager|sector\s+manager|admin|super\s+admin)\b/.test(
+      lower
+    );
+
+  return hasGuideCue || hasDemoGuideCue || hasDirectLoginRoleCue;
 }
 
 function isInputLikeElement(el: PageMapElement): boolean {
@@ -83,7 +95,7 @@ function isInputLikeElement(el: PageMapElement): boolean {
 }
 
 function isDemoControl(el: PageMapElement): boolean {
-  return /\bdemo\b|try-demo|sample-account|quick-demo/i.test(`${el.id} ${el.label}`);
+  return /\b(?:demo|domo)\b|try-demo|sample-account|quick-demo/i.test(`${el.id} ${el.label}`);
 }
 
 function isAuthRoutePath(route: string): boolean {
@@ -97,9 +109,13 @@ function isAuthRoutePath(route: string): boolean {
   );
 }
 
-function isNoiseControl(el: PageMapElement): boolean {
+function isNoiseControl(el: PageMapElement, allowLogout = false): boolean {
+  const text = `${el.id} ${el.label}`;
+  if (allowLogout && /\b(logout|sign\s*out|signout)\b/i.test(text)) {
+    return false;
+  }
   return /\b(cancel|close|dismiss|back|prev|previous|next|logout|sign\s*out|signout|toggle|theme|aesthetic|forgot|copy|clear)\b/i.test(
-    `${el.id} ${el.label}`
+    text
   );
 }
 
@@ -207,6 +223,54 @@ export function sanitizeGuideStepDecision(
     }
   }
 
+  if (rawAction === 'refresh_and_retry') {
+    return {
+      action: 'refresh_and_retry',
+      refreshApp: true,
+      tip: truncateTipWords(
+        typeof raw.tip === 'string' && raw.tip.trim()
+          ? raw.tip
+          : 'Refreshing the web app now. Please try again.',
+        14
+      ),
+    };
+  }
+
+  if (rawAction === 'ask_user') {
+    const q =
+      typeof raw.question === 'string' && raw.question.trim()
+        ? raw.question.trim().slice(0, 260)
+        : typeof raw.tip === 'string' && raw.tip.trim()
+          ? raw.tip.trim().slice(0, 260)
+          : 'Could you confirm so I can help with the next step?';
+    const askStage =
+      raw.askStage === 'follow_up_guide' ? 'follow_up_guide' : 'diagnostic';
+    const quickReplies = Array.isArray(raw.quickReplies)
+      ? raw.quickReplies
+          .filter((r): r is Record<string, unknown> => Boolean(r && typeof r === 'object'))
+          .slice(0, 5)
+          .map((r, i) => ({
+            id: typeof r.id === 'string' && r.id.trim() ? r.id.trim().slice(0, 60) : `qr-${i + 1}`,
+            label: typeof r.label === 'string' && r.label.trim() ? r.label.trim().slice(0, 60) : 'Option',
+            value: typeof r.value === 'string' && r.value.trim() ? r.value.trim().slice(0, 160) : 'yes',
+            ...(r.variant === 'primary' || r.variant === 'secondary' || r.variant === 'danger'
+              ? { variant: r.variant as 'primary' | 'secondary' | 'danger' }
+              : {}),
+          }))
+      : undefined;
+
+    return {
+      action: 'ask_user',
+      askStage,
+      question: q,
+      tip: truncateTipWords(
+        typeof raw.tip === 'string' && raw.tip.trim() ? raw.tip : q,
+        16
+      ),
+      ...(quickReplies && quickReplies.length > 0 ? { quickReplies } : {}),
+    };
+  }
+
   const action: GuideStepAction = (ALLOWED_GUIDE_ACTIONS as readonly string[]).includes(rawAction)
     ? (rawAction as GuideStepAction)
     : 'point_and_wait';
@@ -297,6 +361,7 @@ const FALLBACK_ROUTE_HINTS: RouteHint[] = [
   { route: '/app/profile', keywords: ['my profile', 'phone', 'password', 'change password'], label: 'Student Profile' },
   { route: '/app/notifications', keywords: ['notification', 'notice', 'alert', 'unread'], label: 'Notifications' },
   { route: '/app', keywords: ['my balance', 'student portal'], label: 'Student Portal' },
+  { route: '/login', keywords: ['demo', 'domo', 'demo mode', 'demo model', 'login', 'sign in', 'logout', 'log out', 'sign out', 'signout'], label: 'Portal Login & Demo' },
   { route: '/admin', keywords: ['dashboard', 'overview', 'admin'], label: 'Admin Overview' },
 ];
 
@@ -365,6 +430,8 @@ function stemToken(word: string): string {
 function normalizePhraseTokens(text: string): string[] {
   const normalized = text
     .toLowerCase()
+    .replace(/\bdomo\b/g, ' demo ')
+    .replace(/\bmodel\b/g, ' mode ')
     .replace(/\blog\s+in\b/g, ' login signin ')
     .replace(/\bsign\s+in\b/g, ' signin login ')
     .replace(/\bsign\s+up\b/g, ' signup register ')
@@ -404,7 +471,7 @@ function extractGoalKeywords(goal: string): string[] {
 function scoreElement(el: PageMapElement, keywords: string[], wantsDemo = false): number {
   if (!wantsDemo && isDemoControl(el)) return 0;
   const hay = `${el.id} ${el.label} ${el.type}`.toLowerCase();
-  let score = 0;
+  let score = wantsDemo && isDemoControl(el) ? 5 : 0;
   for (const kw of keywords) {
     if (hay.includes(kw)) {
       score += el.id.toLowerCase().includes(kw) ? 4 : 3;
@@ -544,11 +611,15 @@ export function detectAmbiguousGuidePaths(
   const { baseTokens, expandedTokens, intents } = expandGoalStems(cleanGoal);
   if (baseTokens.length === 0 && !isGenericOverviewGoal) return null;
 
-  const wantsDemo = /\b(demo|sample|preview|trial)\b/i.test(cleanGoal);
+  const wantsDemo = /\b(demo|domo|sample|preview|trial)\b/i.test(cleanGoal);
+  const wantsLogout = /\b(log\s*out|logout|sign\s*out|signout)\b/i.test(cleanGoal);
 
   // Actionable non-input, non-noise controls from pageMap, collapsing repeated table-row instances
   const rawActionableControls = pageMap.filter(
-    (el) => !isInputLikeElement(el) && !isNoiseControl(el) && Boolean(el.label?.trim() || el.id)
+    (el) =>
+      !isInputLikeElement(el) &&
+      !isNoiseControl(el, wantsLogout) &&
+      Boolean(el.label?.trim() || el.id)
   );
   const { primaryControls: nonRowControls, rowTaskRepresentatives } =
     collapseRepeatedRowControls(rawActionableControls);
@@ -609,7 +680,9 @@ export function detectAmbiguousGuidePaths(
       if (hasMatch) matchingChildren += 1;
     }
 
-    const isSubPathCluster = /\b(role|method|mode|type|provider|option|channel|format)\b/.test(prefix);
+    const isSubPathCluster =
+      /\b(role|method|mode|type|provider|option|channel|format)\b/.test(prefix) ||
+      (wantsDemo && isDemoCluster);
     const isVariantCluster = isSubPathCluster || /\btab\b/.test(prefix);
 
     // Skip mixed-intent tab clusters (e.g. "Sign in" vs "Create college") when user clearly asked for only one intent
@@ -626,6 +699,8 @@ export function detectAmbiguousGuidePaths(
       }
       if (!isDemoCluster) {
         score += 2;
+      } else if (wantsDemo) {
+        score += 10;
       }
       candidateGroups.push({ score, elements: els, isVariantCluster });
     }
@@ -646,10 +721,13 @@ export function detectAmbiguousGuidePaths(
     baseTokens.some((tok) => currentPageTopicTokens.has(tok)) ||
     (intents.has('settings') && /institution|profile|settings/i.test(`${currentRoute} ${currentRouteLabel}`));
 
-  const isNavOrHeaderChrome = (el: PageMapElement): boolean =>
-    /^(nav-|mobile-nav-|header-|user-menu|role-switcher|sector-switcher|login-demo|students-class-chip|ledger-type-|pager-)/.test(
-      el.id.toLowerCase()
+  const isNavOrHeaderChrome = (el: PageMapElement): boolean => {
+    const idLower = el.id.toLowerCase();
+    if (!wantsDemo && idLower.startsWith('login-demo')) return true;
+    return /^(nav-|mobile-nav-|header-|user-menu|role-switcher|sector-switcher|students-class-chip|ledger-type-|pager-)/.test(
+      idLower
     );
+  };
 
   const pageSectionTasks: Array<{ el: PageMapElement; labelOverride?: string }> = [];
   if (topControlGroup.length < 2 && goalMatchesCurrentPageTopic) {
@@ -846,17 +924,19 @@ export function detectAmbiguousGuidePaths(
   if (finalOptions.length < 2) return null;
 
   const topicPreview =
-    intents.has('signin')
-      ? 'sign-in'
-      : intents.has('signup')
-        ? 'registration'
-        : intents.has('export')
-          ? 'export'
-          : intents.has('import')
-            ? 'import'
-            : intents.has('payment')
-              ? 'payment'
-              : 'available';
+    wantsDemo
+      ? 'demo'
+      : intents.has('signin')
+        ? 'sign-in'
+        : intents.has('signup')
+          ? 'registration'
+          : intents.has('export')
+            ? 'export'
+            : intents.has('import')
+              ? 'import'
+              : intents.has('payment')
+                ? 'payment'
+                : 'available';
 
   return {
     action: 'clarify',
@@ -996,31 +1076,50 @@ export function buildDeterministicGuideStep(params: {
   const lowerGoal = goal.toLowerCase();
   const prevLower = previousStepSummary.toLowerCase();
   const keywords = extractGoalKeywords(goal);
-  const wantsDemo = /\b(demo|sample|preview|trial)\b/i.test(lowerGoal);
+  const wantsDemo = /\b(demo|domo|sample|preview|trial)\b/i.test(lowerGoal);
+  const wantsLogout = /\b(log\s*out|logout|sign\s*out|signout)\b/i.test(lowerGoal);
   const { intents } = expandGoalStems(goal);
 
-  // Strict goal scoping: if user asked to log in / sign in (with no secondary post-login action),
+  // Strict goal scoping: if user asked to log in / sign in / open demo (with no secondary post-login action),
   // complete immediately once the browser has reached a non-auth overview/portal route.
+  const coreGoalForScope = lowerGoal.replace(/\b(?:using|via)\s+"[^"]*"/gi, ' ').trim();
   const hasPostLoginTask =
     /\b(add|create|enroll|invite|import|upload|export|download|delete|remove|edit|update|void|pay|payment|fee|deposit|bulk|batch|report|statement|password|reset|profile|notification|notice|ledger|institution|audit|receipt|settings)\b/i.test(
-      lowerGoal
+      coreGoalForScope
     );
   const isLoginOnlyGoal =
-    (intents.has('signin') || /\b(log\s*in|sign\s*in|login|signin)\b/i.test(lowerGoal)) &&
+    (intents.has('signin') || /\b(log\s*in|sign\s*in|login|signin)\b/i.test(coreGoalForScope)) &&
     !hasPostLoginTask;
+  const isDemoOnlyGoal = wantsDemo && !hasPostLoginTask;
 
   if (
-    isLoginOnlyGoal &&
+    (isLoginOnlyGoal || isDemoOnlyGoal) &&
     !isAuthRoutePath(currentRoute) &&
     (stepNumber >= 2 ||
       prevLower.includes('login') ||
       prevLower.includes('sign in') ||
-      prevLower.includes('signin'))
+      prevLower.includes('signin') ||
+      prevLower.includes('demo') ||
+      prevLower.includes('domo') ||
+      prevLower.includes('clicked'))
   ) {
     return sanitizeGuideStepDecision(
       {
         action: 'complete',
-        tip: 'Signed in and on the overview page.',
+        tip: isDemoOnlyGoal
+          ? 'Demo mode opened and ready.'
+          : 'Signed in and on the overview page.',
+      },
+      pageMap,
+      stepNumber
+    );
+  }
+
+  if (wantsDemo && isAuthRoutePath(currentRoute) && prevLower.includes('login-demo-')) {
+    return sanitizeGuideStepDecision(
+      {
+        action: 'complete',
+        tip: 'Opening demo workspace now.',
       },
       pageMap,
       stepNumber
@@ -1029,6 +1128,79 @@ export function buildDeterministicGuideStep(params: {
 
   // Filter out demo controls completely unless user explicitly asked for demo
   const candidatePool = wantsDemo ? pageMap : pageMap.filter((el) => !isDemoControl(el));
+
+  if (wantsLogout) {
+    if (isAuthRoutePath(currentRoute)) {
+      return sanitizeGuideStepDecision(
+        {
+          action: 'complete',
+          tip: 'You are signed out on the Login page.',
+        },
+        pageMap,
+        stepNumber
+      );
+    }
+    const signOutEl = candidatePool.find((el) =>
+      /\b(signout|sign\s*out|logout|log\s*out)\b/i.test(`${el.id} ${el.label}`)
+    );
+    if (signOutEl) {
+      return sanitizeGuideStepDecision(
+        {
+          action: 'point_and_wait',
+          targetId: signOutEl.id,
+          tip: 'Click Sign out to end your current session.',
+        },
+        pageMap,
+        stepNumber
+      );
+    }
+    const userMenuBtn = candidatePool.find((el) => el.id === 'user-menu-btn');
+    if (userMenuBtn && !prevLower.includes('user-menu-btn')) {
+      return sanitizeGuideStepDecision(
+        {
+          action: 'click_safe',
+          targetId: userMenuBtn.id,
+          tip: 'Open your profile menu to find Sign out.',
+        },
+        pageMap,
+        stepNumber
+      );
+    }
+  }
+
+  // If user asked to open demo mode while signed into an overview/dashboard route, navigate to /login first
+  if (
+    wantsDemo &&
+    !isAuthRoutePath(currentRoute) &&
+    !candidatePool.some(isDemoControl) &&
+    !prevLower.includes('navigated to /login')
+  ) {
+    return sanitizeGuideStepDecision(
+      {
+        action: 'navigate',
+        route: '/login',
+        tip: 'Opening Portal Login for demo mode.',
+      },
+      pageMap,
+      stepNumber
+    );
+  }
+
+  // If on /login for demo mode without a specific role named, highlight the demo role buttons cleanly
+  if (wantsDemo && isAuthRoutePath(currentRoute) && !preferredTargetId) {
+    const demoButtons = candidatePool.filter(isDemoControl);
+    if (demoButtons.length > 0 && !/\b(admin|manager|student)\b/i.test(lowerGoal)) {
+      return sanitizeGuideStepDecision(
+        {
+          action: 'point_and_wait',
+          targetId: demoButtons[0]!.id,
+          tip: 'Pick Admin, Sector Manager, or Student to open demo.',
+        },
+        pageMap,
+        stepNumber
+      );
+    }
+  }
 
   // Honor confirmed target route or target element on Step 1
   if (stepNumber === 1) {
@@ -1121,8 +1293,11 @@ export function buildDeterministicGuideStep(params: {
     );
   }
 
-  const isCancelOrClose = (el: PageMapElement): boolean =>
-    /\b(cancel|close|dismiss|back|prev|logout|signout|sign\s*out)\b/i.test(`${el.id} ${el.label}`);
+  const isCancelOrClose = (el: PageMapElement): boolean => {
+    const text = `${el.id} ${el.label}`;
+    if (wantsLogout && /\b(logout|signout|sign\s*out)\b/i.test(text)) return false;
+    return /\b(cancel|close|dismiss|back|prev|logout|signout|sign\s*out)\b/i.test(text);
+  };
 
   // When a drawer/dialog submit/save/create button is visible and all form inputs are handled, guide manually to it
   const visibleSubmitBtn = candidatePool.find(
@@ -1291,4 +1466,155 @@ export function buildDeterministicGuideStep(params: {
     pageMap,
     stepNumber
   );
+}
+
+export function isAffirmativeReply(text: string): boolean {
+  const clean = text.trim().toLowerCase().replace(/[.!?,]+$/g, '');
+  return /^(?:yes|yeah|yep|yup|ya|y|sure|ok|okay|correct|true|i am|i did|registered|done|confirm|athe|അതെ)(?:\b|\s|$)/i.test(
+    clean
+  );
+}
+
+export function isNegativeReply(text: string): boolean {
+  const clean = text.trim().toLowerCase().replace(/[.!?,]+$/g, '');
+  return /^(?:no|nope|nah|n|not yet|not|never|i am not|did not|didn't|unregistered|alla|അല്ല)(?:\b|\s|$)/i.test(
+    clean
+  );
+}
+
+export function isCloseReply(text: string): boolean {
+  const clean = text.trim().toLowerCase().replace(/[.!?,]+$/g, '');
+  return /^(?:close|stop|exit|quit|done|finish|finished|cancel|dismiss|nothing|no|no\s+thanks|that'?s\s+all|bye)(?:\b|\s|$)/i.test(
+    clean
+  );
+}
+
+export function buildDynamicDiagnosticQuestion(params: {
+  errorText: string;
+  goal: string;
+  currentRoute: string;
+}): string {
+  const errLower = params.errorText.toLowerCase();
+  const goalLower = params.goal.toLowerCase();
+
+  if (/already exists|duplicate|already registered|taken/i.test(errLower)) {
+    return 'Are you trying to update an existing record rather than create a new one?';
+  }
+
+  if (
+    /no student found|admission number|student id|not found|no sector manager|unregistered|not registered|account/i.test(
+      errLower
+    ) ||
+    (/\b(student|manager|login|sign\s*in)\b/i.test(goalLower) && /incorrect|invalid|wrong|failed|error/i.test(errLower))
+  ) {
+    return 'Are you registered by the admin?';
+  }
+
+  if (/password|credentials|email or password/i.test(errLower)) {
+    return 'Did your admin confirm or reset your login credentials?';
+  }
+
+  if (/assigned|sector/i.test(errLower)) {
+    return 'Has the admin assigned your sector yet?';
+  }
+
+  if (/permission|unauthorized|forbidden|403|401/i.test(errLower)) {
+    return 'Have you already been granted permission by the admin?';
+  }
+
+  if (/required|invalid|format|missing|must be/i.test(errLower)) {
+    return 'Did you verify all required details with the admin?';
+  }
+
+  return 'Have you verified your details with the admin?';
+}
+
+export function resolveGuideTroubleshootingStep(params: {
+  goal: string;
+  currentRoute: string;
+  pageErrors?: string[];
+  userReply?: string;
+  troubleshootingContext?: {
+    errorText: string;
+    questionAsked: string;
+    stage: 'diagnostic' | 'follow_up_guide';
+  };
+}): GuideStepResponse | null {
+  const { goal, currentRoute, pageErrors = [], userReply, troubleshootingContext } = params;
+  const cleanReply = (userReply || '').trim();
+
+  // Handle user reply to an active troubleshooting or follow-up question
+  if (troubleshootingContext && cleanReply) {
+    if (troubleshootingContext.stage === 'diagnostic') {
+      if (isAffirmativeReply(cleanReply)) {
+        return {
+          action: 'refresh_and_retry',
+          refreshApp: true,
+          tip: 'Refreshing the web app now. Please try again.',
+        };
+      }
+
+      if (isNegativeReply(cleanReply)) {
+        const errLower = troubleshootingContext.errorText.toLowerCase();
+        const advice = /student|admission|manager|account|register|credential|password|sector/i.test(
+          errLower
+        )
+          ? 'Please contact the admin to register or verify your account.'
+          : 'Please contact the admin for help resolving this issue.';
+        const fullMsg = `${advice} Do you want any other guide?`;
+        return {
+          action: 'ask_user',
+          askStage: 'follow_up_guide',
+          question: fullMsg,
+          tip: fullMsg,
+          quickReplies: [
+            { id: 'close', label: 'Close', value: 'close', variant: 'danger' },
+          ],
+        };
+      }
+    }
+
+    if (troubleshootingContext.stage === 'follow_up_guide') {
+      if (isCloseReply(cleanReply)) {
+        return {
+          action: 'complete',
+          tip: 'Closing guide. Ask anytime if you need more help.',
+        };
+      }
+      if (isAffirmativeReply(cleanReply)) {
+        const askTopic = 'What would you like me to guide you through?';
+        return {
+          action: 'ask_user',
+          askStage: 'follow_up_guide',
+          question: askTopic,
+          tip: askTopic,
+          quickReplies: [
+            { id: 'close', label: 'Close', value: 'close', variant: 'danger' },
+          ],
+        };
+      }
+    }
+  }
+
+  // Detect any newly visible page error when we are not already answering a question
+  const firstError = pageErrors.find((e) => e.trim().length > 0)?.trim();
+  if (firstError && !troubleshootingContext) {
+    const question = buildDynamicDiagnosticQuestion({
+      errorText: firstError,
+      goal,
+      currentRoute,
+    });
+    return {
+      action: 'ask_user',
+      askStage: 'diagnostic',
+      question,
+      tip: question,
+      quickReplies: [
+        { id: 'yes', label: 'Yes', value: 'yes', variant: 'primary' },
+        { id: 'no', label: 'No', value: 'no', variant: 'secondary' },
+      ],
+    };
+  }
+
+  return null;
 }

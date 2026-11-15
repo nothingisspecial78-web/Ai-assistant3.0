@@ -145,6 +145,46 @@ function redactSensitiveArgs(val: unknown): unknown {
   return val;
 }
 
+function sanitizeRawToolArgs(
+  raw: Record<string, unknown>,
+  toolName: string,
+  scope?: AccessScope
+): Record<string, unknown> {
+  const cleaned: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'string') {
+      const trimmed = v.trim();
+      if (trimmed === '' || trimmed === 'null' || trimmed === 'undefined') continue;
+      if (trimmed === 'true') {
+        cleaned[k] = true;
+        continue;
+      }
+      if (trimmed === 'false') {
+        cleaned[k] = false;
+        continue;
+      }
+      cleaned[k] = trimmed;
+      continue;
+    }
+    cleaned[k] = v;
+  }
+
+  if (scope?.role === 'SECTOR_MANAGER' && scope.sectorIds.length > 0) {
+    const assigned = scope.sectorIds[0];
+    if (toolName === 'get_sector' || toolName === 'summarize_sector_finance') {
+      const secVal = String(cleaned.sector || '').trim().toLowerCase();
+      if (!secVal || secVal === 'my sector' || secVal === 'this sector') {
+        cleaned.sector = assigned;
+      }
+    } else if (toolName === 'find_sectors' && cleaned.query === undefined) {
+      cleaned.query = '';
+    }
+  }
+
+  return cleaned;
+}
+
 export async function runChatAgent(params: {
   profile: AppProfile;
   messages: ChatMessage[];
@@ -280,7 +320,7 @@ export async function runChatAgent(params: {
 
   const hasDomainEntityAction =
     useTools &&
-    (/\b(student|students|sector|sectors|union|fund|funds|charity|grant|endowment|fee|fees|financial|finance|finances|transaction|transactions|admission|book|books|loan|loans|catalog|library|tab|khazna|ledger|receipt|void|unvoid|batch|class|deposit|debit|credit|tuition|mess|fiqh|civil|ihsan|velitcham|audit|report|reports|issued|notifications|notice|profile|signatory|institution|download|export|print|pdf|excel|xlsx|csv|statement|template|phone|org|organization|organizations|college|colleges|workspace|edit|invite|revoke|extend|theme|dark|light|demo|admin|manager|account|signup|sign\s*up|campus|password|display|overview|summary|balance|bulk|upload|stable|dues|owe|owes|collect|paid|status)\b/i.test(
+    (/\b(student|students|sector|sectors|union|fund|funds|charity|grant|endowment|fee|fees|financial|finance|finances|transaction|transactions|admission|book|books|loan|loans|catalog|library|tab|khazna|ledger|receipt|void|unvoid|batch|class|deposit|debit|credit|tuition|mess|fiqh|civil|ihsan|velitcham|audit|report|reports|issued|notifications|notice|profile|signatory|institution|download|export|print|pdf|excel|xlsx|csv|statement|template|phone|org|organization|organizations|college|colleges|workspace|edit|invite|revoke|extend|theme|dark|light|demo|domo|model|logout|log\s*out|sign\s*out|signout|session|section|admin|manager|account|signup|sign\s*up|campus|password|display|overview|summary|balance|bulk|upload|stable|dues|owe|owes|collect|paid|status)\b/i.test(
       question
     ) ||
       /\bS\d{3,5}\b/i.test(question) ||
@@ -650,7 +690,8 @@ export async function runChatAgent(params: {
         parsedArgs = {};
       }
 
-      const validated = tool.inputSchema.safeParse(parsedArgs);
+      const sanitizedArgs = sanitizeRawToolArgs(parsedArgs, tool.name, scope);
+      const validated = tool.inputSchema.safeParse(sanitizedArgs);
       if (!validated.success) {
         llmMessages.push({
           role: 'tool',

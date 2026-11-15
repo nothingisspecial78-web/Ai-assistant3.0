@@ -108,6 +108,9 @@ function buildGroundedLocalAnswer(
         return parsed.summary;
       }
       if (typeof parsed.error === 'string' && parsed.error.trim()) {
+        if (parsed.error.trim() === 'Invalid tool arguments') {
+          return "I couldn't match all parameters for that lookup cleanly. Try rephrasing with a sector, class, or student name.";
+        }
         return parsed.error;
       }
     } catch {

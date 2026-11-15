@@ -68,9 +68,16 @@ export function getElementLabel(el: Element): string {
   const title = el.getAttribute('title');
   if (title && title.trim()) return stripHtmlAndWhitespace(title).slice(0, 80);
 
-  // Only short compact label text for clickable buttons/links (no raw container text dumps)
-  const text = stripHtmlAndWhitespace(el.textContent || '');
-  return text.slice(0, 48);
+  // Join multi-span/block button text cleanly (e.g. "Sector Manager" + "Dept Fiqh ledger")
+  const rawInner =
+    typeof HTMLElement !== 'undefined' &&
+    el instanceof HTMLElement &&
+    typeof el.innerText === 'string' &&
+    el.innerText.trim()
+      ? el.innerText.replace(/\s*\n+\s*/g, ' · ')
+      : el.textContent || '';
+  const text = stripHtmlAndWhitespace(rawInner);
+  return text.slice(0, 64);
 }
 
 function getElementType(el: Element): string {
@@ -265,3 +272,62 @@ export function findElementByAiId(targetId: string, root?: ParentNode): HTMLElem
   }
   return null;
 }
+
+function isErrorNodeVisible(el: Element): boolean {
+  if (el.closest(EXCLUDED_CONTAINER_SELECTOR)) return false;
+  if ((el as HTMLElement).hidden) return false;
+
+  if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+    let cur: Element | null = el;
+    let depth = 0;
+    while (cur && depth < 6 && cur.tagName !== 'BODY' && cur.tagName !== 'HTML') {
+      const style = window.getComputedStyle(cur);
+      const op = Number.parseFloat(style.opacity || '1');
+      if (style.display === 'none' || style.visibility === 'hidden' || op <= 0.05) {
+        return false;
+      }
+      cur = cur.parentElement;
+      depth += 1;
+    }
+  }
+
+  if (typeof el.getBoundingClientRect === 'function') {
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+  }
+
+  return true;
+}
+
+const ERROR_BANNER_SELECTOR =
+  '[role="alert"], [data-error="true"], [data-guide-error], .text-debit, .text-destructive, [class*="error-banner"], [class*="form-error"]';
+
+/**
+ * Scans the host app DOM outside the assistant widget for visible error messages
+ * (e.g. failed login alerts, validation errors, permission denials).
+ */
+export function getVisiblePageErrors(root?: ParentNode): string[] {
+  if (typeof document === 'undefined' && !root) return [];
+  const scope = root || document;
+  const nodes = Array.from(scope.querySelectorAll(ERROR_BANNER_SELECTOR));
+  const seen = new Set<string>();
+  const errors: string[] = [];
+
+  for (const el of nodes) {
+    if (!isErrorNodeVisible(el)) continue;
+    // Skip negative balance/ledger numeric table cells that happen to use .text-debit
+    const rawText = stripHtmlAndWhitespace(el.textContent || '');
+    if (!rawText || rawText.length < 4 || rawText.length > 220) continue;
+    if (/^[+-]?\s*(?:₹|rs\.?|inr|\$)?\s*[\d,]+(?:\.\d+)?$/i.test(rawText)) continue;
+    if (/^\d+\s*(?:debit|credit|students?|entries|rows?)/i.test(rawText)) continue;
+
+    const norm = rawText.toLowerCase();
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    errors.push(rawText);
+    if (errors.length >= 5) break;
+  }
+
+  return errors;
+}
+

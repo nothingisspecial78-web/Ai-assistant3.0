@@ -324,23 +324,27 @@ export const khaznaGetOverviewTool: ToolDefinition = {
 export const khaznaListStudentsTool: ToolDefinition = {
   name: 'khaznaListStudents',
   description:
-    'List or search students permitted for the current role (Student sees only themselves; Manager sees student balances in their assigned sector only; Admin sees active org directory).',
+    'List, count, or search students permitted for the current role (Student sees only themselves; Manager sees student balances in their assigned sector only; Admin sees active org directory), including debit charges and pending dues.',
   risk: 'read',
   inputSchema: z.object({
     query: z.string().optional(),
     className: z.string().optional(),
+    sector: z.string().optional(),
     pendingOnly: z.boolean().optional(),
+    hasDebit: z.boolean().optional(),
   }),
   jsonParameters: {
     type: 'object',
     properties: {
       query: { type: 'string', description: 'Optional student name or Ad.No (e.g. S0125)' },
       className: { type: 'string', description: 'Optional class name filter (e.g. Fiqh 2)' },
+      sector: { type: 'string', description: 'Optional sector slug or name' },
       pendingOnly: { type: 'boolean', description: 'When true, return only students with pending/due fee balance' },
+      hasDebit: { type: 'boolean', description: 'When true, return only students who have debit entries/charges' },
     },
   },
   summarize: (args) =>
-    `List Khazna students${args.pendingOnly ? ' with pending fees' : ''}${args.className ? ` in ${String(args.className)}` : ''}${args.query ? ` matching "${String(args.query)}"` : ''}`,
+    `List Khazna students${args.hasDebit ? ' with debit entries' : args.pendingOnly ? ' with pending fees' : ''}${args.className ? ` in ${String(args.className)}` : ''}${args.sector ? ` (${String(args.sector)})` : ''}${args.query ? ` matching "${String(args.query)}"` : ''}`,
   async execute(args, ctx) {
     const state = readAppState(ctx);
     const role = getRole(state);
@@ -354,19 +358,52 @@ export const khaznaListStudentsTool: ToolDefinition = {
       };
     }
 
+    const managerSector = getAllowedSectorSlug(state);
+    const sectorsList = Array.isArray(state.sectors)
+      ? (state.sectors as Array<Record<string, unknown>>)
+      : [];
+    const assignedSecRec = sectorsList.find((s) => String(s.slug) === managerSector) || sectorsList[0];
+    const sectorQ = typeof args.sector === 'string' ? args.sector.trim() : '';
+
+    if (role === 'manager' && sectorQ && !isSameSectorQuery(sectorQ, managerSector, assignedSecRec)) {
+      return denyRole(`view students outside your assigned sector (${managerSector})`, role);
+    }
+
+    const resolvedAdminSector =
+      role === 'admin' && sectorQ ? resolveSectorSlug(sectorQ, sectorsList, '') : undefined;
+    const targetSectorSlug =
+      resolvedAdminSector?.matched ? resolvedAdminSector.slug : undefined;
+
     const students = Array.isArray(state.students)
       ? (state.students as Array<Record<string, unknown>>)
       : [];
     const q = typeof args.query === 'string' ? args.query.trim().toLowerCase() : '';
     const cls = typeof args.className === 'string' ? args.className.trim().toLowerCase() : '';
     const pendingOnly = Boolean(args.pendingOnly);
+    const hasDebit = Boolean(args.hasDebit);
+
+    const getMetrics = (s: Record<string, unknown>) => {
+      const secMap =
+        s.bySector && typeof s.bySector === 'object'
+          ? (s.bySector as Record<string, Record<string, unknown>>)
+          : undefined;
+      const src =
+        role === 'admin' && targetSectorSlug && secMap
+          ? secMap[targetSectorSlug] || { credit: 0, debit: 0, balance: 0 }
+          : s;
+      const credit = Number(src.credit ?? 0);
+      const debit = Number(src.debit ?? 0);
+      const bal = Number(src.balance ?? credit - debit);
+      const explicitPending = Number(src.pendingFee ?? src.due ?? 0);
+      const netDue = explicitPending > 0 ? explicitPending : bal < 0 ? Math.abs(bal) : 0;
+      return { credit, debit, bal, netDue };
+    };
 
     const filtered = students.filter((s) => {
       if (cls && !String(s.className || '').toLowerCase().includes(cls)) return false;
-      if (pendingOnly) {
-        const pendingVal = Number(s.pendingFee ?? s.due ?? s.balance ?? 0);
-        if (!(pendingVal > 0)) return false;
-      }
+      const { debit, netDue } = getMetrics(s);
+      if (pendingOnly && !(netDue > 0)) return false;
+      if (hasDebit && !(debit > 0 || netDue > 0)) return false;
       if (q) {
         const hay = `${s.id || ''} ${s.name || ''} ${s.className || ''} ${s.guardian || ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -374,22 +411,53 @@ export const khaznaListStudentsTool: ToolDefinition = {
       return true;
     });
 
+    const totalDebit = filtered.reduce((acc, s) => acc + getMetrics(s).debit, 0);
+    const dueStudents = filtered.filter((s) => getMetrics(s).netDue > 0);
+    const totalDue = dueStudents.reduce((acc, s) => acc + getMetrics(s).netDue, 0);
+
+    const scopeNote =
+      role === 'manager'
+        ? ` in sector \`${managerSector}\``
+        : targetSectorSlug
+          ? ` in sector \`${targetSectorSlug}\``
+          : '';
+
     const listed = filtered
       .slice(0, 15)
       .map((s) => {
-        const bal = Number(s.pendingFee ?? s.due ?? s.balance ?? 0);
-        const balNote = bal > 0 ? ` — Pending: ${fmtInr(bal)}` : '';
-        return `- **${String(s.name || s.id)}** (\`${String(s.id)}\`, ${String(s.className || '—')})${balNote}`;
+        const { credit, debit, netDue } = getMetrics(s);
+        const parts: string[] = [];
+        if (debit > 0 || hasDebit) parts.push(`Debit: ${fmtInr(debit)}`);
+        if (credit > 0 || hasDebit) parts.push(`Credit: ${fmtInr(credit)}`);
+        if (netDue > 0) parts.push(`Due: ${fmtInr(netDue)}`);
+        else if (hasDebit || pendingOnly) parts.push('Settled');
+        const note = parts.length > 0 ? ` — ${parts.join(' · ')}` : '';
+        return `- **${String(s.name || s.id)}** (\`${String(s.id)}\`, ${String(s.className || '—')})${note}`;
       })
       .join('\n');
 
+    let summary: string;
+    if (filtered.length === 0) {
+      summary = `Found **0** matching students${hasDebit ? ' with debit entries' : pendingOnly ? ' with pending fees' : ''}${scopeNote}.`;
+    } else if (hasDebit) {
+      summary = `Found **${filtered.length}** student(s) with debit entries${scopeNote} (total debited: ${fmtInr(totalDebit)}; **${dueStudents.length}** currently have unpaid dues totaling ${fmtInr(totalDue)}):\n${listed}`;
+    } else if (pendingOnly) {
+      summary = `Found **${filtered.length}** student(s) with pending dues${scopeNote} (total due: ${fmtInr(totalDue)}):\n${listed}`;
+    } else {
+      summary = `Found **${filtered.length}** student(s)${scopeNote}:\n${listed}`;
+    }
+
     return {
       ok: true,
-      summary:
-        filtered.length === 0
-          ? `Found 0 matching students${role === 'manager' ? ` in sector \`${getAllowedSectorSlug(state)}\`` : ''}.`
-          : `Found ${filtered.length} student(s)${role === 'manager' ? ` in sector \`${getAllowedSectorSlug(state)}\`` : ''}:\n${listed}`,
-      data: { total: filtered.length, students: filtered.slice(0, 25) },
+      summary,
+      data: {
+        total: filtered.length,
+        totalStudentsInScope: students.length,
+        totalDebit,
+        dueCount: dueStudents.length,
+        totalDue,
+        students: filtered.slice(0, 25),
+      },
     };
   },
 };
@@ -539,6 +607,33 @@ export const khaznaNavigateTool: ToolDefinition = {
 
     const reqRole = args.role as KhaznaRole | undefined;
     let route = typeof args.route === 'string' && args.route.trim() ? args.route.trim() : '';
+    if (route === '/logout') route = '/login';
+
+    if (route === '/login') {
+      const currentPath = String(state.pathname || '');
+      const alreadyOnLogin = currentPath === '/login';
+      return {
+        ok: true,
+        summary: alreadyOnLogin
+          ? 'You are already signed out on the Login page (`/login`).'
+          : 'Signed out of your current session and navigated to the Login page (`/login`).',
+        data: { route: '/login', signOut: true },
+        uiAction: {
+          action: 'refresh',
+          appCommand: {
+            command: 'NAVIGATE',
+            payload: {
+              route: '/login',
+              signOut: true,
+            },
+          },
+          cursorWaypoints: [
+            { label: 'Signing out to Login', selector: 'main, header', action: 'click', delayMs: 320 },
+          ],
+          label: 'Sign out to /login',
+        },
+      };
+    }
 
     // Enforce strict RBAC on route navigation when user is NOT loading demo or switching roles explicitly via "open demo"
     if (!args.loadDemo && !reqRole) {

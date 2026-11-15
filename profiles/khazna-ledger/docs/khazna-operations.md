@@ -24,8 +24,11 @@
 - All appearance settings (Light Appearance / Dark Appearance) and workspace switching live in the top-right **Menu** (`AestheticMenu`) drawer or via AI Assistant commands.
 - Use the **Cursor Inspector** (`+ -> Select cuboid with cursor` or `Inspect`) to attach one or multiple parent cards/cuboids as an Accessory View above the chat composer before asking questions.
 
+## Signing Out & Opening Demo Mode
+- **Signing Out**: Any signed-in user (Admin, Sector Manager, Student, or Super Admin) can ask the AI Assistant to `log out`, `sign out`, or `log out this session`, or click **Sign out** in the top navigation bar (inside the profile menu for Admins/Managers or the top-right logout button for Students) to return to `/login`.
+- **Opening Demo Mode**: From `/login` (or by asking `open demo mode` / `try demo`), choose **Admin**, **Sector Manager**, or **Student** under **Try the demo** to load sample Khazna campus data immediately.
+
 ## മലയാളം സഹായം (Malayalam Guide)
 - ഖസ്ന (Khazna) കോളേജ് ഫിനാൻസ് പോർട്ടലിൽ വിദ്യാർത്ഥികളുടെ ഫീസ്, ഡെപ്പോസിറ്റ് (Credit), ചാർജുകൾ (Debit), ബാക്കി തുക (Balance) എന്നിവ സെക്ടർ അടിസ്ഥാനത്തിൽ കാണാം.
 - തെറ്റായി ചേർത്ത എൻട്രികൾ ഡിലീറ്റ് ചെയ്യാതെ **Void** (കാരണം രേഖപ്പെടുത്തി റദ്ദാക്കൽ) ചെയ്യുകയാണ് ചെയ്യുന്നത്.
 - പുതിയ വിദ്യാർത്ഥികളെ ചേർക്കാനും, എക്സൽ/CSV ഫയൽ വഴി ബൾക്ക് ഇംപോർട്ട് ചെയ്യാനും, റസീപ്റ്റുകൾ പോസ്റ്റ് ചെയ്യാനും, സ്റ്റുഡന്റ് ബാലൻസ് പരിശോധിക്കാനും AI അസിസ്റ്റന്റിനോട് നേരിട്ട് ആവശ്യപ്പെടാം.
-

@@ -517,6 +517,7 @@ function LoginPage() {
                 <AnimatePresence>
                   {error && (
                     <motion.div
+                      role="alert"
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
                       exit={{ opacity: 0, height: 0 }}
@@ -612,6 +613,7 @@ function LoginPage() {
                     key={r}
                     type="button"
                     data-ai-id={`login-demo-${r}-btn`}
+                    data-guide-id={`login-demo-${r}-btn`}
                     onClick={() => tryDemo(r)}
                     className="hover-lift flex flex-col items-center gap-0.5 rounded-xl border border-hairline bg-accent px-1.5 py-1.5 text-center text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground sm:gap-1 sm:px-2 sm:py-2.5"
                   >

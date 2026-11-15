@@ -7,9 +7,11 @@ import {
   GuideStepRequestSchema,
   MAX_GUIDE_STEPS,
   OPENROUTER_GUIDE_MODELS,
+  resolveGuideTroubleshootingStep,
   sanitizeGuideStepDecision,
   type AvailableRouteHint,
   type GuideStepResponse,
+  type GuideTroubleshootingContext,
   type PageMapElement,
 } from '@ai-assistant/core';
 import { logger, type ServerConfig } from '../config.ts';
@@ -157,6 +159,9 @@ export async function resolveGuideStepDecision(params: {
   preferredRoute?: string;
   availableRoutes?: AvailableRouteHint[];
   appContext?: string;
+  pageErrors?: string[];
+  userReply?: string;
+  troubleshootingContext?: GuideTroubleshootingContext;
   openRouterApiKey?: string;
   geminiApiKey?: string;
   groqApiKey?: string;
@@ -164,22 +169,49 @@ export async function resolveGuideStepDecision(params: {
   fetchImpl?: typeof fetch;
 }): Promise<GuideStepResponse> {
   const {
-    goal,
-    previousStepSummary,
+    goal: rawGoal,
+    previousStepSummary: rawPreviousStepSummary,
     currentRoute,
-    stepNumber,
+    stepNumber: rawStepNumber,
     pageMap,
-    confirmedPath = false,
+    confirmedPath: rawConfirmedPath = false,
     preferredTargetId,
     preferredRoute,
     availableRoutes = [],
     appContext,
+    pageErrors = [],
+    userReply,
+    troubleshootingContext,
     openRouterApiKey = '',
     geminiApiKey = '',
     groqApiKey = '',
     timeoutMs = 12000,
     fetchImpl = fetch,
   } = params;
+
+  // Dynamic error recovery & follow-up guide handling
+  const troubleshootingDecision = resolveGuideTroubleshootingStep({
+    goal: rawGoal,
+    currentRoute,
+    pageErrors,
+    userReply,
+    troubleshootingContext,
+  });
+  if (troubleshootingDecision) {
+    return {
+      ...troubleshootingDecision,
+      provider: 'guide-troubleshooting',
+    };
+  }
+
+  // If user answered the follow-up prompt ("Do you want any other guide?") with a new topic,
+  // restart step planning seamlessly for that new goal.
+  const switchingToNewGuide =
+    troubleshootingContext?.stage === 'follow_up_guide' && Boolean(userReply?.trim());
+  const goal = switchingToNewGuide ? userReply!.trim() : rawGoal;
+  const previousStepSummary = switchingToNewGuide ? '' : rawPreviousStepSummary;
+  const stepNumber = switchingToNewGuide ? 1 : rawStepNumber;
+  const confirmedPath = switchingToNewGuide ? false : rawConfirmedPath;
 
   // Hard 10-step limit enforced before any LLM call
   if (stepNumber > MAX_GUIDE_STEPS) {
@@ -200,30 +232,69 @@ export async function resolveGuideStepDecision(params: {
     : null;
 
   const lowerGoal = goal.toLowerCase();
-  const wantsDemo = /\b(demo|sample|preview|trial)\b/i.test(lowerGoal);
+  const coreGoalForScope = lowerGoal.replace(/\b(?:using|via)\s+"[^"]*"/gi, ' ').trim();
+  const wantsDemo = /\b(demo|domo|sample|preview|trial)\b/i.test(lowerGoal);
+  const wantsLogout = /\b(log\s*out|logout|sign\s*out|signout)\b/i.test(lowerGoal);
   const isAuthRoute =
     /^\/(?:login|signin|auth)(?:\/|$)|\/(?:login|signin)$/i.test(currentRoute);
   const hasPostLoginTask =
     /\b(add|create|enroll|invite|import|upload|export|download|delete|remove|edit|update|void|pay|payment|fee|deposit|bulk|batch|report|statement|password|reset|profile|notification|notice|ledger|institution|audit|receipt|settings)\b/i.test(
-      lowerGoal
+      coreGoalForScope
     );
   const isLoginOnlyGoal =
-    /\b(log\s*in|sign\s*in|login|signin)\b/i.test(lowerGoal) && !hasPostLoginTask;
+    /\b(log\s*in|sign\s*in|login|signin)\b/i.test(coreGoalForScope) && !hasPostLoginTask;
+  const isDemoOnlyGoal = wantsDemo && !hasPostLoginTask;
 
-  // Hard stop once login-only goal has reached a non-auth overview route
+  // Hard stop once login-only or demo-only goal has reached a non-auth overview route
   if (
-    isLoginOnlyGoal &&
+    (isLoginOnlyGoal || isDemoOnlyGoal) &&
     !isAuthRoute &&
     (stepNumber >= 2 ||
-      /login|sign\s*in|signin/i.test(previousStepSummary))
+      /login|sign\s*in|signin|demo|domo|clicked/i.test(previousStepSummary))
   ) {
     return {
       ...sanitizeGuideStepDecision(
-        { action: 'complete', tip: 'Signed in and on the overview page.' },
+        {
+          action: 'complete',
+          tip: isDemoOnlyGoal
+            ? 'Demo mode opened and ready.'
+            : 'Signed in and on the overview page.',
+        },
         pageMap,
         stepNumber
       ),
       provider: 'goal-guard',
+    };
+  }
+
+  // Use deterministic local clarification directly for demo/logout sibling clusters so typos like "domo model" never elicit "I can't find..."
+  if (allowClarify && localClarify && (wantsDemo || wantsLogout)) {
+    return {
+      ...localClarify,
+      provider: 'deterministic-dom-clarify',
+    };
+  }
+
+  // When user clicked a clarification option with an explicit preferredTargetId, execute that exact control directly
+  if (
+    stepNumber === 1 &&
+    confirmedPath &&
+    preferredTargetId &&
+    pageMap.some((el) => el.id === preferredTargetId)
+  ) {
+    return {
+      ...buildDeterministicGuideStep({
+        goal,
+        previousStepSummary,
+        pageMap,
+        stepNumber,
+        currentRoute,
+        confirmedPath,
+        preferredTargetId,
+        preferredRoute,
+        availableRoutes,
+      }),
+      provider: 'confirmed-target',
     };
   }
 
@@ -259,9 +330,14 @@ export async function resolveGuideStepDecision(params: {
       }
     }
 
-    // If the LLM guessed a single action on a clearly ambiguous Step 1 DOM/route cluster,
-    // enforce clarifying prompt cleanly; otherwise preserve the LLM's clarify or action decision.
-    if (allowClarify && safe.action !== 'clarify' && localClarify) {
+    // Enforce crisp localClarify when a clear sibling cluster exists and LLM either guessed one or got confused by typos
+    if (
+      allowClarify &&
+      localClarify &&
+      (safe.action !== 'clarify' ||
+        /can'?t find|cannot find|not found/i.test(safe.question || '') ||
+        !safe.options?.some((o) => Boolean(o.targetId || o.route)))
+    ) {
       return {
         ...localClarify,
         provider: providerName,
@@ -486,6 +562,9 @@ export function createGuideStepRouter({ cfg, fetchImpl }: GuideStepRouteDeps): R
       preferredRoute,
       availableRoutes,
       appContext,
+      pageErrors,
+      userReply,
+      troubleshootingContext,
     } = parsed.data;
 
     const decision = await resolveGuideStepDecision({
@@ -499,6 +578,9 @@ export function createGuideStepRouter({ cfg, fetchImpl }: GuideStepRouteDeps): R
       preferredRoute,
       availableRoutes,
       appContext,
+      pageErrors,
+      userReply,
+      troubleshootingContext,
       openRouterApiKey: cfg.openRouterApiKey,
       geminiApiKey: cfg.geminiApiKey,
       groqApiKey: cfg.groqApiKey,

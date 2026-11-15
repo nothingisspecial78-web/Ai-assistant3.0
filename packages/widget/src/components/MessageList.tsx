@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Check, ChevronUp, Copy, Navigation, Pencil, X } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronUp, Copy, Mic, MicOff, Navigation, Pencil, X } from 'lucide-react';
 import type { ActionLogEntry, FormRequest, GuideClarificationOption, ImportPreviewResult } from '@ai-assistant/core';
 import type { WidgetMessage } from '../hooks/useChatStream.ts';
+import { useVoiceInput } from '../hooks/useVoiceInput.ts';
 import { ConfirmCard } from './ConfirmCard.tsx';
 import { HumanInLoopFormCard } from './HumanInLoopFormCard.tsx';
 import { ImportPreview } from './ImportPreview.tsx';
@@ -168,6 +169,10 @@ export interface MessageListProps {
   messages: WidgetMessage[];
   suggestions?: string[];
   mobileCompactMode?: boolean;
+  apiUrl?: string;
+  appId?: string;
+  language?: 'auto' | 'en' | 'ml' | string;
+  getAuthToken?: () => string | Promise<string>;
   onExpandMobileHistory?: () => void;
   onSuggestionClick?: (text: string) => void;
   onSubmitForm?: (
@@ -191,6 +196,7 @@ export interface MessageListProps {
   onDownloadErrorCsv: (uploadId: string) => void;
   onEditMessage?: (messageId: string, nextText: string) => void;
   onSelectGuideOption?: (messageId: string, option: GuideClarificationOption) => void;
+  onVoiceClarificationReply?: (transcript: string) => void;
   onActionCompleted?: (action: ActionLogEntry) => void;
 }
 
@@ -202,6 +208,10 @@ export function MessageList({
     'Open Admin demo dashboard',
   ],
   mobileCompactMode = false,
+  apiUrl = '',
+  appId = 'khazna-ledger',
+  language = 'en',
+  getAuthToken,
   onExpandMobileHistory,
   onSuggestionClick,
   onSubmitForm,
@@ -212,10 +222,24 @@ export function MessageList({
   onDownloadErrorCsv,
   onEditMessage,
   onSelectGuideOption,
+  onVoiceClarificationReply,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
+  const {
+    recordingState: clarifyVoiceState,
+    micError: clarifyMicError,
+    toggleVoiceInput: toggleClarifyVoiceInput,
+  } = useVoiceInput({
+    apiUrl,
+    appId,
+    language,
+    getAuthToken,
+    onTranscript: (transcript) => {
+      onVoiceClarificationReply?.(transcript);
+    },
+  });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -676,6 +700,49 @@ export function MessageList({
                     </button>
                   );
                 })}
+                {!msg.guideClarification.selectedOptionId && onVoiceClarificationReply && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                    <button
+                      type="button"
+                      data-testid="clarify-voice-btn"
+                      data-ai-id="assistant-clarify-voice-btn"
+                      onClick={toggleClarifyVoiceInput}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '5px 10px',
+                        borderRadius: '0.65rem',
+                        border: '1px solid var(--aia-hairline)',
+                        background:
+                          clarifyVoiceState === 'listening'
+                            ? 'color-mix(in oklab, var(--aia-debit) 14%, transparent)'
+                            : 'var(--aia-inset)',
+                        color:
+                          clarifyVoiceState === 'listening'
+                            ? 'var(--aia-debit)'
+                            : 'var(--aia-primary)',
+                        fontSize: '11.5px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {clarifyVoiceState === 'listening' ? <MicOff size={12} /> : <Mic size={12} />}
+                      <span>
+                        {clarifyVoiceState === 'listening'
+                          ? 'Listening… tap to stop'
+                          : clarifyVoiceState === 'transcribing'
+                            ? 'Transcribing…'
+                            : 'Speak choice'}
+                      </span>
+                    </button>
+                    {clarifyMicError && (
+                      <span style={{ fontSize: '11px', color: 'var(--aia-debit)' }}>
+                        {clarifyMicError}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

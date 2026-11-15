@@ -1,13 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "strict": true,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
     "experimentalDecorators": true,
     "useDefineForClassFields": false,
     "module": "ESNext",
-    "types": ["vite/client", "node"],
+    "types": ["vite/client"],
     "lib": [
       "ES2022",
       "DOM",
@@ -22,19 +19,10 @@
     "paths": {
       "@/*": [
         "./src/*"
-      ],
-      "@ai-assistant/core": [
-        "./packages/core/src/index.ts"
-      ],
-      "@ai-assistant/server": [
-        "./packages/server/src/index.ts"
-      ],
-      "@ai-assistant/widget": [
-        "./packages/widget/src/index.ts"
       ]
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["dist", "packages/widget/dist", "node_modules"]
+  "exclude": ["dist"]
 }

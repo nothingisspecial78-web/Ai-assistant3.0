@@ -44,7 +44,7 @@ export function shouldUseAgentLoop(
   }
 
   const actionVerbRegex =
-    /\b(create|add|enroll|enrol|register|insert|import|list|show|give|tell|get|view|fetch|find|search|filter|check|lookup|look\s+up|clear|open|switch|go\s+to|navigate|borrow|checkout|check\s+out|issue|lend|return|mark|unmark|unpay|revert|pay|paid|pending|settle|collect|dues|owe|approve|click|do\s+this|do\s+it\s+for\s+me|run|execute|please\s+make|post|void|unvoid|restore|cancel|deposit|credit|debit|charge|batch|batches|dark|light|demo|try|download|export|print|pdf|excel|xlsx|csv|statement|template|edit|update|rename|remove|delete|invite|assign|revoke|extend|toggle|form|account|stable|status|state|ledger|signup|sign\s*up|college|campus|display|report|reports|overview|summary|summarize|balance|bulk|upload|phone|notice|notices|notifications|workspace|audit|signatory|signatories|issued|organization|organizations|platform|defaulter|defaulters|fund|funds|collection|collections|class|classes|receipt|receipts|manager|managers|user|users|guide|walkthrough|compare|comparison|versus|vs)\b/i;
+    /\b(create|add|enroll|enrol|register|insert|import|list|show|give|tell|get|view|fetch|find|search|filter|check|lookup|look\s+up|clear|open|switch|go\s+to|navigate|log\s*out|logout|sign\s*out|signout|session|section|borrow|checkout|check\s+out|issue|lend|return|mark|unmark|unpay|revert|pay|paid|pending|settle|collect|dues|owe|approve|click|do\s+this|do\s+it\s+for\s+me|run|execute|please\s+make|post|void|unvoid|restore|cancel|deposit|credit|debit|charge|batch|batches|dark|light|demo|domo|model|try|download|export|print|pdf|excel|xlsx|csv|statement|template|edit|update|rename|remove|delete|invite|assign|revoke|extend|toggle|form|account|stable|status|state|ledger|signup|sign\s*up|college|campus|display|report|reports|overview|summary|summarize|balance|bulk|upload|phone|notice|notices|notifications|workspace|audit|signatory|signatories|issued|organization|organizations|platform|defaulter|defaulters|fund|funds|collection|collections|class|classes|receipt|receipts|manager|managers|user|users|student|students|how\s+many|guide|walkthrough|compare|comparison|versus|vs)\b/i;
 
   return actionVerbRegex.test(lower);
 }
@@ -435,7 +435,11 @@ export function inferDeterministicToolCall(
       ) || /(?:ഗൈഡ്|സഹായിക്കുക|എങ്ങനെ)/.test(question);
     if (isGuideIntent && tools.has('start_guide')) {
       let guideId: string | undefined;
-      if (/\b(log\s*in|sign\s*in)\b/i.test(lower) || /ലോഗിൻ/.test(question)) {
+      if (/\b(log\s*out|logout|sign\s*out|signout)\b/i.test(lower)) {
+        guideId = 'auth.logout';
+      } else if (/\b(?:demo|domo)\b/i.test(lower)) {
+        guideId = 'public.demo';
+      } else if (/\b(log\s*in|sign\s*in)\b/i.test(lower) || /ലോഗിൻ/.test(question)) {
         guideId = 'public.login';
       } else if (/\b(forgot|reset)\s+password\b/i.test(lower)) {
         guideId = 'public.forgot_password';
@@ -665,14 +669,22 @@ export function inferDeterministicToolCall(
     }
     if (
       tools.has('khaznaListStudents') &&
-      /\b(list|show|get|view|find|search)\b.*\bstudents?\b/i.test(lower) &&
-      !/\b(download|export|csv|pdf|add|enroll|create|edit|delete|remove|open|page|directory|defaulters?)\b/i.test(lower)
+      (/\b(list|show|get|view|find|search|count)\b.*\bstudents?\b/i.test(lower) ||
+        /\b(?:how\s+many|number\s+of|which|who)\b.*\bstudents?\b/i.test(lower) ||
+        /\bstudents?\b.*\b(?:have|has|with|having)\b.*\b(?:debit|debits|pending|unpaid|dues?|charges?)\b/i.test(
+          lower
+        )) &&
+      !/\b(download|export|csv|pdf|add|enroll|enrol|create|edit|delete|remove|open|page|directory|defaulters?)\b/i.test(
+        lower
+      )
     ) {
+      const hasDebit = /\b(debit|debits|charge|charged|charges)\b/i.test(lower);
       const pendingOnly = /\b(pending|unpaid|dues?|owe|owing|defaulters?)\b/i.test(lower);
       return {
         name: 'khaznaListStudents',
         args: {
           ...(sectorMatch ? { sector: sectorMatch } : {}),
+          ...(hasDebit ? { hasDebit: true } : {}),
           ...(pendingOnly ? { pendingOnly: true } : {}),
         },
       };
@@ -1018,9 +1030,20 @@ export function inferDeterministicToolCall(
       return { name: 'khaznaDeleteSector', args: { sector: sectorMatch } };
     }
 
-    // Navigate routes / roles / demo
+    // Navigate routes / roles / demo / logout
     if (tools.has('khaznaNavigate')) {
-      if (/\b(try\s+demo|open\s+demo|load\s+demo)\b/i.test(lower)) {
+      if (
+        /\b(log\s*out|logout|sign\s*out|signout|end\s+(?:this\s+)?(?:session|section)|exit\s+(?:this\s+)?(?:session|section|portal|account))\b/i.test(
+          lower
+        )
+      ) {
+        return { name: 'khaznaNavigate', args: { route: '/login' } };
+      }
+      if (
+        /\b(?:try|open|load|start|launch|enter)\s+(?:the\s+|a\s+)?(?:demo|domo)(?:\s+(?:mode|model|account|accounts|portal|workspace|session))?\b|\b(?:demo|domo)\s+(?:mode|model)\b/i.test(
+          lower
+        )
+      ) {
         const role = /\bmanager\b/i.test(lower)
           ? 'manager'
           : /\bstudent\b/i.test(lower)

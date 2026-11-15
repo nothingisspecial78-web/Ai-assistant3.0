@@ -405,9 +405,28 @@ export const GuideStepActionSchema = z.enum([
   'point_and_wait',
   'click_safe',
   'complete',
+  'ask_user',
+  'refresh_and_retry',
 ]);
 
 export type GuideStepAction = z.infer<typeof GuideStepActionSchema>;
+
+export const GuideQuickReplySchema = z.object({
+  id: z.string().min(1).max(60),
+  label: z.string().min(1).max(60),
+  value: z.string().min(1).max(160),
+  variant: z.enum(['primary', 'secondary', 'danger']).optional(),
+});
+
+export type GuideQuickReply = z.infer<typeof GuideQuickReplySchema>;
+
+export const GuideTroubleshootingContextSchema = z.object({
+  errorText: z.string().max(300).default(''),
+  questionAsked: z.string().max(300).default(''),
+  stage: z.enum(['diagnostic', 'follow_up_guide']),
+});
+
+export type GuideTroubleshootingContext = z.infer<typeof GuideTroubleshootingContextSchema>;
 
 export const GuideClarificationOptionSchema = z.object({
   id: z.string().min(1).max(160),
@@ -450,16 +469,30 @@ export const GuideStepRequestSchema = z.object({
   preferredRoute: z.string().max(320).optional(),
   availableRoutes: z.array(AvailableRouteHintSchema).max(60).optional(),
   appContext: z.string().max(600).optional(),
+  pageErrors: z.array(z.string().max(240)).max(5).optional(),
+  userReply: z.string().max(400).optional(),
+  troubleshootingContext: GuideTroubleshootingContextSchema.optional(),
 });
 
 export type GuideStepRequest = z.infer<typeof GuideStepRequestSchema>;
 
 export const GuideStepResponseSchema = z.object({
-  action: z.enum(['navigate', 'point_and_wait', 'click_safe', 'complete', 'clarify']),
+  action: z.enum([
+    'navigate',
+    'point_and_wait',
+    'click_safe',
+    'complete',
+    'clarify',
+    'ask_user',
+    'refresh_and_retry',
+  ]),
   targetId: z.string().max(160).optional(),
   route: z.string().max(300).optional(),
-  tip: z.string().min(1).max(160),
-  question: z.string().max(240).optional(),
+  tip: z.string().min(1).max(180),
+  question: z.string().max(280).optional(),
+  askStage: z.enum(['diagnostic', 'follow_up_guide']).optional(),
+  quickReplies: z.array(GuideQuickReplySchema).max(6).optional(),
+  refreshApp: z.boolean().optional(),
   options: z.array(GuideClarificationOptionSchema).max(6).optional(),
   sensitiveBlocked: z.boolean().optional(),
   provider: z.string().optional(),

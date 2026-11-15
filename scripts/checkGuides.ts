@@ -21,8 +21,11 @@ function hasGuideTargetInSource(guideId: string, sourceText: string): boolean {
   if (sourceText.includes(`"${guideId}"`) || sourceText.includes(`'${guideId}'`)) {
     return true;
   }
-  // Handle dynamic login-role-${r} pattern
+  // Handle dynamic login-role-${r} and login-demo-${r}-btn patterns
   if (guideId.startsWith('login-role-') && sourceText.includes('login-role-${')) {
+    return true;
+  }
+  if (guideId.startsWith('login-demo-') && sourceText.includes('login-demo-${')) {
     return true;
   }
   return false;

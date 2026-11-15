@@ -175,4 +175,37 @@ describe('Intent Parser & Agent Routing', () => {
       },
     });
   });
+
+  it('routes Khazna logout, domo/demo model, and sector student debit queries cleanly', () => {
+    const khaznaTools = fakeTools([
+      'khaznaNavigate',
+      'khaznaGetOverview',
+      'khaznaGetStudentAccount',
+      'khaznaListStudents',
+      'khaznaListTransactions',
+    ]);
+
+    expect(shouldUseAgentLoop('log out this section', 5)).toBe(true);
+    expect(shouldUseAgentLoop('how many student have debit in my sector', 5)).toBe(true);
+    expect(shouldUseAgentLoop('open the domo model', 5)).toBe(true);
+
+    expect(inferDeterministicToolCall('log out this section', khaznaTools, [])).toEqual({
+      name: 'khaznaNavigate',
+      args: { route: '/login' },
+    });
+
+    expect(
+      inferDeterministicToolCall('how many student have debit in my sector', khaznaTools, [])
+    ).toEqual({
+      name: 'khaznaListStudents',
+      args: { hasDebit: true },
+    });
+
+    expect(
+      inferDeterministicToolCall('open the domo model', khaznaTools, [])
+    ).toEqual({
+      name: 'khaznaNavigate',
+      args: { role: 'admin', loadDemo: true },
+    });
+  });
 });

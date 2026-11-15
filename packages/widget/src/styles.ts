@@ -614,6 +614,139 @@ export function ensureWidgetStyles(): void {
       justify-content: flex-end;
       gap: 8px;
     }
+    .aia-guide-cursor-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 11px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.09);
+      color: #e2e8f0;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 150ms ease, opacity 150ms ease;
+    }
+    .aia-guide-cursor-back:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+    }
+    .aia-guide-cursor-back:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .aia-guide-cursor-icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.08);
+      color: #e2e8f0;
+      cursor: pointer;
+      transition: background-color 150ms ease, color 150ms ease;
+    }
+    .aia-guide-cursor-icon-btn:hover {
+      background: rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+    }
+    .aia-guide-cursor-icon-btn.is-speaking {
+      border-color: rgba(249, 115, 22, 0.65);
+      background: rgba(249, 115, 22, 0.22);
+      color: #fdba74;
+    }
+    .aia-guide-cursor-error-note {
+      margin-bottom: 6px;
+      padding: 5px 8px;
+      border-radius: 8px;
+      background: rgba(239, 68, 68, 0.16);
+      border: 1px solid rgba(248, 113, 113, 0.35);
+      color: #fecaca;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .aia-guide-cursor-replies {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .aia-guide-cursor-reply-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 5px 12px;
+      border-radius: 9px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.1);
+      color: #f8fafc;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: filter 150ms ease, background-color 150ms ease;
+    }
+    .aia-guide-cursor-reply-btn:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+    .aia-guide-cursor-reply-btn.is-primary {
+      background: linear-gradient(135deg, #f97316, #ea580c);
+      border-color: rgba(255, 255, 255, 0.24);
+      color: #ffffff;
+    }
+    .aia-guide-cursor-reply-btn.is-danger {
+      background: rgba(239, 68, 68, 0.2);
+      border-color: rgba(248, 113, 113, 0.45);
+      color: #fecaca;
+    }
+    .aia-guide-cursor-reply-input-row {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .aia-guide-cursor-reply-input {
+      flex: 1;
+      min-width: 0;
+      height: 30px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(2, 6, 23, 0.55);
+      color: #f8fafc;
+      font-size: 12px;
+      padding: 0 9px;
+      outline: none;
+    }
+    .aia-guide-cursor-reply-input:focus {
+      border-color: rgba(249, 115, 22, 0.7);
+    }
+    .aia-guide-cursor-mic-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.1);
+      color: #e2e8f0;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .aia-guide-cursor-mic-btn.is-listening {
+      border-color: rgba(248, 113, 113, 0.7);
+      background: rgba(239, 68, 68, 0.25);
+      color: #fecaca;
+    }
+    .aia-guide-cursor-mic-btn.is-send {
+      background: linear-gradient(135deg, #f97316, #ea580c);
+      border-color: rgba(255, 255, 255, 0.24);
+      color: #ffffff;
+    }
+    .aia-guide-cursor-mic-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
     .aia-guide-cursor-next {
       display: inline-flex;
       align-items: center;
