@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
-import express, { type NextFunction, type Request, type Response, type Router } from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import express, { type Express, type NextFunction, type Request, type Response, type Router } from 'express';
 import * as XLSX from 'xlsx';
 
 export interface StudentRecord {
@@ -394,3 +396,31 @@ export function createCollegeFinanceRouter(store = createCollegeFinanceStore()):
 
   return router;
 }
+
+export function createCollegeFinanceApp(store = createCollegeFinanceStore()): Express {
+  const app = express();
+  app.set('trust proxy', 1);
+  app.use(express.json({ limit: '10mb' }));
+
+  const router = createCollegeFinanceRouter(store);
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok', service: 'demo-college-finance' });
+  });
+  app.use('/api/demo/college-finance', router);
+  app.use('/', router);
+
+  return app;
+}
+
+const app = createCollegeFinanceApp();
+export default app;
+
+const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+const currentPath = fileURLToPath(import.meta.url);
+if (!process.env.VERCEL && entryPath === currentPath) {
+  const port = Number(process.env.PORT || 3001);
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`demo-college-finance listening on port ${port}`);
+  });
+}
+

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import fs from 'node:fs';
 import path from 'node:path';
 import pino from 'pino';
 
@@ -71,10 +72,27 @@ export function loadConfig(overrides: Partial<ServerConfig> = {}): ServerConfig 
     uploadMaxBytes: Number(process.env.UPLOAD_MAX_BYTES || 5 * 1024 * 1024),
     uploadMaxRows: Number(process.env.UPLOAD_MAX_ROWS || 5000),
     responseCacheTtlMs: Number(process.env.RESPONSE_CACHE_TTL_MS || 300000),
-    profilesDir: path.resolve(process.cwd(), process.env.PROFILES_DIR || './profiles'),
+    profilesDir: resolveDefaultProfilesDir(),
     logLevel: process.env.LOG_LEVEL || 'info',
     ...overrides,
   };
+}
+
+function resolveDefaultProfilesDir(): string {
+  if (process.env.PROFILES_DIR) {
+    return path.resolve(process.cwd(), process.env.PROFILES_DIR);
+  }
+  const candidates = [
+    path.resolve(process.cwd(), 'profiles'),
+    path.resolve(import.meta.dirname, '../../../profiles'),
+    path.resolve(import.meta.dirname, '../../profiles'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0];
 }
 
 export const config = loadConfig();

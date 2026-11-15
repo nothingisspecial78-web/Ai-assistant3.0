@@ -17,8 +17,9 @@ async function callConnectedAppApi(
   method: string,
   body?: unknown
 ): Promise<{ status: number; data: Record<string, unknown> }> {
-  const base = resolveAppBaseUrl(ctx.profile.api.baseUrl, ctx.cfg.port).replace(/\/$/, '');
-  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  const base = resolveAppBaseUrl(ctx.profile.api.baseUrl, ctx.cfg.port, ctx.appId).replace(/\/$/, '');
+  const relativePath = path.replace(/^\/+/, '');
+  const targetUrl = new URL(relativePath, `${base}/`);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'x-app-id': ctx.appId,
@@ -27,7 +28,7 @@ async function callConnectedAppApi(
     headers.Authorization = `Bearer ${ctx.authToken}`;
   }
 
-  const res = await fetch(`${base}${cleanPath}`, {
+  const res = await fetch(targetUrl, {
     method,
     headers,
     body: body !== undefined && method !== 'GET' ? JSON.stringify(body) : undefined,

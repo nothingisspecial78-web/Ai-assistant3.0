@@ -17,7 +17,53 @@ export interface AuthedRequest extends Request {
   appProfile?: AppProfile;
 }
 
-export function resolveAppBaseUrl(baseUrl: string, serverPort: number): string {
+export interface AppServiceBinding {
+  envVar: 'DEMO_COLLEGE_FINANCE_URL' | 'SECOND_DEMO_APP_URL';
+  mountPrefix: string;
+}
+
+const SERVICE_BINDING_RULES: Array<{
+  matchAppIds: string[];
+  matchPathPrefix: string;
+  binding: AppServiceBinding;
+}> = [
+  {
+    matchAppIds: ['college-finance', 'khazna-ledger'],
+    matchPathPrefix: '/api/demo/college-finance',
+    binding: {
+      envVar: 'DEMO_COLLEGE_FINANCE_URL',
+      mountPrefix: '/api/demo/college-finance',
+    },
+  },
+  {
+    matchAppIds: ['second-demo'],
+    matchPathPrefix: '/api/demo/second-demo',
+    binding: {
+      envVar: 'SECOND_DEMO_APP_URL',
+      mountPrefix: '/api/demo/second-demo',
+    },
+  },
+];
+
+export function resolveAppBaseUrl(
+  baseUrl: string,
+  serverPort: number,
+  appId?: string,
+  env: Record<string, string | undefined> = process.env
+): string {
+  for (const rule of SERVICE_BINDING_RULES) {
+    const matchesApp = appId ? rule.matchAppIds.includes(appId) : false;
+    const matchesUrl = baseUrl.includes(rule.matchPathPrefix);
+    if (matchesApp || matchesUrl) {
+      const boundOrigin = env[rule.binding.envVar]?.trim();
+      if (boundOrigin) {
+        const originWithSlash = boundOrigin.endsWith('/') ? boundOrigin : `${boundOrigin}/`;
+        const relativePrefix = rule.binding.mountPrefix.replace(/^\/+/, '');
+        return new URL(relativePrefix, originWithSlash).toString().replace(/\/$/, '');
+      }
+    }
+  }
+
   // In single-port container environments, allow localhost:3000 in profile.json to track actual server port
   return baseUrl.replace('http://localhost:3000', `http://127.0.0.1:${serverPort}`);
 }
@@ -86,11 +132,10 @@ export async function verifyUserToken(params: {
   // 4. Me endpoint auth mode
   if ((profile.auth.mode === 'me' || profile.auth.mode === 'hybrid') && profile.api.meEndpoint) {
     try {
-      const base = resolveAppBaseUrl(profile.api.baseUrl, cfg.port).replace(/\/$/, '');
-      const endpoint = profile.api.meEndpoint.startsWith('/')
-        ? profile.api.meEndpoint
-        : `/${profile.api.meEndpoint}`;
-      const res = await fetch(`${base}${endpoint}`, {
+      const base = resolveAppBaseUrl(profile.api.baseUrl, cfg.port, profile.appId).replace(/\/$/, '');
+      const relativeEndpoint = profile.api.meEndpoint.replace(/^\/+/, '');
+      const targetUrl = new URL(relativeEndpoint, `${base}/`);
+      const res = await fetch(targetUrl, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${cleanToken}`,

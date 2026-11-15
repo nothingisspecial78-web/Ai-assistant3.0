@@ -18,14 +18,34 @@ export interface PlatformSuperAdmin {
   lastLoginAt?: string;
 }
 
-const STORE_PATH = path.resolve(process.cwd(), 'data/platform_admins.json');
+function resolveDataFile(fileName: string): string {
+  const tmpPath = path.join('/tmp', 'khazna-platform-data', fileName);
+  if (fs.existsSync(tmpPath)) return tmpPath;
+  const candidates = [
+    path.resolve(process.cwd(), 'data', fileName),
+    path.resolve(import.meta.dirname, '../../../../data', fileName),
+    path.resolve(import.meta.dirname, '../../../data', fileName),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return candidates[0];
+}
+
+function resolveWritableDataFile(fileName: string): string {
+  if (process.env.VERCEL) {
+    return path.join('/tmp', 'khazna-platform-data', fileName);
+  }
+  return resolveDataFile(fileName);
+}
 
 export function loadSuperAdminStore(): PlatformSuperAdmin[] {
-  if (!fs.existsSync(STORE_PATH)) {
+  const storePath = resolveDataFile('platform_admins.json');
+  if (!fs.existsSync(storePath)) {
     return [];
   }
   try {
-    const raw = fs.readFileSync(STORE_PATH, 'utf-8');
+    const raw = fs.readFileSync(storePath, 'utf-8');
     return JSON.parse(raw) as PlatformSuperAdmin[];
   } catch {
     return [];
@@ -33,11 +53,18 @@ export function loadSuperAdminStore(): PlatformSuperAdmin[] {
 }
 
 export function saveSuperAdminStore(admins: PlatformSuperAdmin[]): void {
-  const dir = path.dirname(STORE_PATH);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  const target = resolveWritableDataFile('platform_admins.json');
+  try {
+    const dir = path.dirname(target);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(target, JSON.stringify(admins, null, 2), 'utf-8');
+  } catch {
+    const fallback = path.join('/tmp', 'khazna-platform-data', 'platform_admins.json');
+    fs.mkdirSync(path.dirname(fallback), { recursive: true });
+    fs.writeFileSync(fallback, JSON.stringify(admins, null, 2), 'utf-8');
   }
-  fs.writeFileSync(STORE_PATH, JSON.stringify(admins, null, 2), 'utf-8');
 }
 
 const router = express.Router();
@@ -82,15 +109,12 @@ function recordSuccess(key: string): void {
 }
 
 // Platform audit log store
-const AUDIT_LOG_FILE = path.resolve(process.cwd(), 'data/platform_audit_logs.json');
-
 export function logSuperAdminAction(adminId: string, action: string, details: Record<string, unknown>): void {
   try {
-    const dir = path.dirname(AUDIT_LOG_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const readFile = resolveDataFile('platform_audit_logs.json');
     let logs: Array<Record<string, unknown>> = [];
-    if (fs.existsSync(AUDIT_LOG_FILE)) {
-      logs = JSON.parse(fs.readFileSync(AUDIT_LOG_FILE, 'utf-8'));
+    if (fs.existsSync(readFile)) {
+      logs = JSON.parse(fs.readFileSync(readFile, 'utf-8'));
     }
     logs.unshift({
       id: `sa-log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -99,8 +123,11 @@ export function logSuperAdminAction(adminId: string, action: string, details: Re
       details,
       timestamp: new Date().toISOString(),
     });
+    const writeFile = resolveWritableDataFile('platform_audit_logs.json');
+    const dir = path.dirname(writeFile);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     // keep last 500 logs
-    fs.writeFileSync(AUDIT_LOG_FILE, JSON.stringify(logs.slice(0, 500), null, 2), 'utf-8');
+    fs.writeFileSync(writeFile, JSON.stringify(logs.slice(0, 500), null, 2), 'utf-8');
   } catch (err) {
     console.error('Failed to write platform audit log:', err);
   }
@@ -238,9 +265,10 @@ router.get('/analytics', requireSuperAdminAuth, async (req: Request, res: Respon
 // 7. Audit Logs
 router.get('/audit-logs', requireSuperAdminAuth, (_req: Request, res: Response) => {
   let logs: Array<Record<string, unknown>> = [];
-  if (fs.existsSync(AUDIT_LOG_FILE)) {
+  const auditFile = resolveDataFile('platform_audit_logs.json');
+  if (fs.existsSync(auditFile)) {
     try {
-      logs = JSON.parse(fs.readFileSync(AUDIT_LOG_FILE, 'utf-8'));
+      logs = JSON.parse(fs.readFileSync(auditFile, 'utf-8'));
     } catch {
       logs = [];
     }
