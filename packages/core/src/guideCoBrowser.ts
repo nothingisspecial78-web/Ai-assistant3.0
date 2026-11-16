@@ -1506,7 +1506,7 @@ export function buildDynamicDiagnosticQuestion(params: {
       errLower
     ) ||
     (/\b(student|manager|login|sign\s*in)\b/i.test(goalLower) && /incorrect|invalid|wrong|failed|error/i.test(errLower)) ||
-    (currentRoute === '/login' && /student|admission|id|number/i.test(errLower))
+    (params.currentRoute === '/login' && /student|admission|id|number/i.test(errLower))
   ) {
     return 'Are you registered by the admin?';
   }

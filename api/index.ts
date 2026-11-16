@@ -59,7 +59,10 @@ export async function getOrCreateVercelApp(): Promise<express.Express> {
 
       appInstance = app;
       return app;
-    })();
+    })().catch((err) => {
+      initPromise = null;
+      throw err;
+    });
   }
   return initPromise;
 }
