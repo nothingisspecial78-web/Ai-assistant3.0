@@ -132,8 +132,15 @@ export function buildOpenRouterGuidePayload(params: {
   availableRoutes?: AvailableRouteHint[];
   appContext?: string;
 }): OpenRouterGuidePayload {
+  const preferredModel = process.env.OPENROUTER_MODEL_FAST || 'openai/gpt-4o-mini';
+  const models = [
+    preferredModel,
+    'openai/gpt-4o-mini',
+    ...OPENROUTER_GUIDE_MODELS,
+  ].filter((m, i, arr) => arr.indexOf(m) === i);
+
   return {
-    models: [...OPENROUTER_GUIDE_MODELS],
+    models,
     route: 'fallback',
     response_format: { type: 'json_object' },
     temperature: 0.1,
@@ -481,7 +488,7 @@ export async function resolveGuideStepDecision(params: {
           Authorization: `Bearer ${groqApiKey}`,
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: process.env.GROQ_MODEL_FAST || 'openai/gpt-oss-20b',
           response_format: { type: 'json_object' },
           temperature: 0.1,
           max_tokens: allowClarify ? 360 : 180,

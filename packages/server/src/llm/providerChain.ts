@@ -26,6 +26,9 @@ export interface ProviderDebugStatus {
 }
 
 export class CircuitBreaker {
+  public readonly name: string;
+  private readonly threshold: number;
+  private readonly cooldownMs: number;
   private state: 'closed' | 'open' | 'half_open' = 'closed';
   private failureCount = 0;
   private lastFailureTime = 0;
@@ -33,10 +36,14 @@ export class CircuitBreaker {
   private lastLatencyMs?: number;
 
   constructor(
-    public readonly name: string,
-    private readonly threshold = 3,
-    private readonly cooldownMs = 60000
-  ) {}
+    name: string,
+    threshold = 3,
+    cooldownMs = 60000
+  ) {
+    this.name = name;
+    this.threshold = threshold;
+    this.cooldownMs = cooldownMs;
+  }
 
   canAttempt(): boolean {
     const now = Date.now();
@@ -129,8 +136,10 @@ export class OpenRouterProvider implements LLMProvider {
   readonly supports = { tools: true, vision: true };
   readonly breaker = new CircuitBreaker('openrouter', 3, 60000);
   private client: OpenAI | null = null;
+  private readonly cfg: ServerConfig;
 
-  constructor(private readonly cfg: ServerConfig) {
+  constructor(cfg: ServerConfig) {
+    this.cfg = cfg;
     if (cfg.openRouterApiKey) {
       this.client = new OpenAI({
         apiKey: cfg.openRouterApiKey,
@@ -291,8 +300,10 @@ export class GeminiProvider implements LLMProvider {
   readonly supports = { tools: true, vision: true };
   readonly breaker = new CircuitBreaker('gemini', 3, 60000);
   private client: OpenAI | null = null;
+  private readonly cfg: ServerConfig;
 
-  constructor(private readonly cfg: ServerConfig) {
+  constructor(cfg: ServerConfig) {
+    this.cfg = cfg;
     if (cfg.geminiApiKey) {
       this.client = new OpenAI({
         apiKey: cfg.geminiApiKey,
@@ -449,8 +460,10 @@ export class GroqProvider implements LLMProvider {
   readonly supports = { tools: true, vision: false };
   readonly breaker = new CircuitBreaker('groq', 3, 60000);
   private client: OpenAI | null = null;
+  private readonly cfg: ServerConfig;
 
-  constructor(private readonly cfg: ServerConfig) {
+  constructor(cfg: ServerConfig) {
+    this.cfg = cfg;
     if (cfg.groqApiKey) {
       this.client = new OpenAI({
         apiKey: cfg.groqApiKey,

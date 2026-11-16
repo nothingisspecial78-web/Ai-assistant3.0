@@ -92,8 +92,11 @@ export interface CachedAnswer {
 
 export class ResponseCache {
   private readonly store = new Map<string, CachedAnswer>();
+  private readonly ttlMs: number;
 
-  constructor(private readonly ttlMs: number) {}
+  constructor(ttlMs: number) {
+    this.ttlMs = ttlMs;
+  }
 
   makeKey(
     appId: string,
