@@ -50,7 +50,11 @@ export async function createAssistantRuntime(
   const repository = new AssistantRepository(cfg);
 
   // Automatically ingest profile docs at startup so local dev & tests have ready indices
-  await ingestAllProfiles({ profiles, embedder, store: vectorStore });
+  try {
+    await ingestAllProfiles({ profiles, embedder, store: vectorStore });
+  } catch (err) {
+    logger.warn({ err }, 'Profile doc auto-ingest encountered non-fatal error; continuing with ready runtime');
+  }
 
   return {
     cfg,

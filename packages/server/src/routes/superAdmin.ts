@@ -21,15 +21,17 @@ export interface PlatformSuperAdmin {
 function resolveDataFile(fileName: string): string {
   const tmpPath = path.join('/tmp', 'khazna-platform-data', fileName);
   if (fs.existsSync(tmpPath)) return tmpPath;
+  const metaDir = typeof import.meta.dirname === 'string' ? import.meta.dirname : null;
   const candidates = [
     path.resolve(process.cwd(), 'data', fileName),
-    path.resolve(import.meta.dirname, '../../../../data', fileName),
-    path.resolve(import.meta.dirname, '../../../data', fileName),
-  ];
+    metaDir ? path.resolve(metaDir, '../../../../data', fileName) : null,
+    metaDir ? path.resolve(metaDir, '../../../data', fileName) : null,
+    path.resolve('/var/task/data', fileName),
+  ].filter((p): p is string => Boolean(p));
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) return candidate;
   }
-  return candidates[0];
+  return candidates[0] || path.resolve(process.cwd(), 'data', fileName);
 }
 
 function resolveWritableDataFile(fileName: string): string {

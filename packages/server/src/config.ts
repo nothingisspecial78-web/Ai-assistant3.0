@@ -82,17 +82,20 @@ function resolveDefaultProfilesDir(): string {
   if (process.env.PROFILES_DIR) {
     return path.resolve(process.cwd(), process.env.PROFILES_DIR);
   }
+  const metaDir = typeof import.meta.dirname === 'string' ? import.meta.dirname : null;
   const candidates = [
     path.resolve(process.cwd(), 'profiles'),
-    path.resolve(import.meta.dirname, '../../../profiles'),
-    path.resolve(import.meta.dirname, '../../profiles'),
-  ];
+    metaDir ? path.resolve(metaDir, '../../../profiles') : null,
+    metaDir ? path.resolve(metaDir, '../../profiles') : null,
+    path.resolve('/var/task/profiles'),
+  ].filter((p): p is string => Boolean(p));
+
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
       return candidate;
     }
   }
-  return candidates[0];
+  return candidates[0] || path.resolve(process.cwd(), 'profiles');
 }
 
 export const config = loadConfig();

@@ -4,7 +4,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/index.ts": {
-      "includeFiles": "{profiles,data}/**",
+      "includeFiles": "{profiles/**,data/**}",
       "maxDuration": 30
     }
   },

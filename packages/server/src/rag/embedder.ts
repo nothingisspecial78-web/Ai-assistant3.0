@@ -114,7 +114,7 @@ export function createEmbedder(cfg: ServerConfig): Embedder {
     ? new OpenAI({
         apiKey: cfg.openRouterApiKey,
         baseURL: cfg.llmBaseUrl,
-        timeout: cfg.llmTimeoutMs,
+        timeout: Math.min(cfg.llmTimeoutMs, 5000),
       })
     : null;
 
@@ -122,7 +122,7 @@ export function createEmbedder(cfg: ServerConfig): Embedder {
     ? new OpenAI({
         apiKey: cfg.geminiApiKey,
         baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-        timeout: cfg.llmTimeoutMs,
+        timeout: Math.min(cfg.llmTimeoutMs, 5000),
       })
     : null;
 
